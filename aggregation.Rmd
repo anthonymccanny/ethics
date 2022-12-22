@@ -1,0 +1,164 @@
+---
+title: "Aggregation"
+author: "Sofia Panasiuk"
+date: "2022-12-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(tidyverse)
+library(tidyr)
+library(ineq)
+library(htmltools)
+library(reactablefmtr)
+```
+
+
+Read in Data
+```{r}
+gallup_data <- read.csv("gallupCleaned221028.csv")
+
+data <- gallup_data %>%
+  dplyr::select(COUNTRYNEW, COUNTRY_ISO3, YEAR_CALENDAR, WP16.LS, WGT) #2,450,403 obs
+
+data <- data %>%
+  filter(!is.na(WP16.LS)) #2,407,897 obs (98% completion rate) %>%
+
+#new column with weighted LS
+data$w_WP16.LS <- data$WP16.LS*data$WGT
+
+#only looking at 2009 and 2019
+data_2009_2019 <- subset(data, YEAR_CALENDAR == 2009 | YEAR_CALENDAR == 2019)
+data_2009 <- subset(data, YEAR_CALENDAR == 2009)
+data_2019 <- subset(data, YEAR_CALENDAR == 2019)
+```
+
+
+```{r utilitarian}
+
+mean_2009 <- data_2009%>% 
+  group_by(COUNTRYNEW, YEAR_CALENDAR)%>%
+  summarise(mean_val=mean(WP16.LS))
+
+mean_2019 <- data_2019%>% 
+  group_by(COUNTRYNEW, YEAR_CALENDAR)%>%
+  summarise(mean_val=mean(WP16.LS))
+
+data_mean <- merge(mean_2009, mean_2019, by.x = "COUNTRYNEW", by.y = "COUNTRYNEW")
+
+data_mean$diff <- (data_mean$mean_val.y - data_mean$mean_val.x)
+
+```
+
+## Including Tables
+
+```{r chad graph}
+
+# Chad Graph
+chad <- subset(data_2009_2019, COUNTRYNEW == "Chad") #2075 obs
+
+mean_chad <- chad%>% 
+  group_by(YEAR_CALENDAR)%>%summarise(mean_val=mean(WP16.LS))
+
+ggplot(chad, aes(x = WP16.LS)) + 
+  geom_histogram(color="black", fill="white", binwidth=1) +
+  geom_vline(data=mean_chad, aes(xintercept=mean_val, col="red")) +
+  facet_grid(factor(YEAR_CALENDAR) ~ .) +
+  labs(title='Life Satisfaction in Chad', x='Life Satisfaction', y='Count') +
+  theme_bw() +
+  theme(legend.position = 'none') 
+
+```
+
+
+```{r util tables}
+table_mean <- select(data_mean, c("COUNTRYNEW", "diff"))
+table_mean <- reactable(table_mean, columns=list(COUNTRYNEW = colDef(name = "Country", sortable=TRUE), 
+                                  diff = colDef(name = "Difference in Average Life Satisfaction (2009-2019)", sortable=TRUE, format = colFormat(digits=2))))
+
+table_mean %>%
+save_reactable("table_mean.png")
+
+```
+
+```{r prioritarianism}
+
+p_2009 <- data_2009%>% 
+  group_by(COUNTRYNEW, YEAR_CALENDAR)%>%
+  summarise(p_sum=sum(sqrt(WP16.LS)/n()))
+
+p_2019 <- data_2019%>% 
+  group_by(COUNTRYNEW, YEAR_CALENDAR)%>%
+  summarise(p_sum=sum(sqrt(WP16.LS)/n()))
+
+data_p <- merge(p_2009, p_2019, by.x = "COUNTRYNEW", by.y = "COUNTRYNEW")
+
+data_p$diff <- (data_p$p_sum.y - data_p$p_sum.x)
+
+
+```
+
+```{r prior tables}
+
+table_prior <- select(data_p, c("COUNTRYNEW", "diff"))
+table_prior <- reactable(table_prior, columns=list(COUNTRYNEW = colDef(name = "Country",
+                                                                       sortable=TRUE), 
+                                                   diff = colDef(name = "Difference in Prioritarian Life Satisfaction (2009-2019)", sortable=TRUE, format = colFormat(digits=2))))
+table_prior 
+```
+
+```{r sufficientiaranism }
+
+s_2009 <- data_2009%>% 
+  group_by(COUNTRYNEW, YEAR_CALENDAR)%>%
+  summarise(s_perc=(sum(WP16.LS <= 4)/n())*100)
+
+s_2019 <- data_2019%>% 
+  group_by(COUNTRYNEW, YEAR_CALENDAR)%>%
+  summarise(s_perc=(sum(WP16.LS <= 4)/n())*100)
+
+
+data_s <- merge(s_2009, s_2019, by.x = "COUNTRYNEW", by.y = "COUNTRYNEW")
+
+data_s$diff <- (data_s$s_perc.y - data_s$s_perc.x)
+
+```
+
+```{r suff tables}
+table_suff <- select(data_s, c("COUNTRYNEW", "diff"))
+table_suff <- reactable(table_suff, columns=list(COUNTRYNEW = colDef(name = "Country",
+                                                                       sortable=TRUE), 
+                                                   diff = colDef(name = "Difference in Sufficientirianism Life Satisfaction (2009-2019)", sortable=TRUE, format = colFormat(digits=2))))
+table_suff
+
+```
+
+```{r egal}
+
+lsgini_2009 <- data_2009%>% 
+  group_by(COUNTRYNEW, YEAR_CALENDAR)%>%
+  summarise(ls_gini=ineq(WP16.LS, type="Gini"))
+
+lsgini_2019 <- data_2019%>% 
+  group_by(COUNTRYNEW, YEAR_CALENDAR)%>%
+  summarise(ls_gini=ineq(WP16.LS, type="Gini"))
+
+data_lsgini <- merge(lsgini_2009, lsgini_2019, by.x = "COUNTRYNEW", by.y = "COUNTRYNEW")
+
+data_lsgini$diff <- factor(data_lsgini$ls_gini.y - data_lsgini$ls_gini.x)
+
+```
+
+```{r egal tables}
+
+table_egal <- select(data_lsgini, c("COUNTRYNEW", "diff"))
+table_egalitarian <- reactable(table_egal, columns=list(COUNTRYNEW = colDef(name = "Country",
+                                                                     sortable=TRUE), 
+                                    diff = colDef(name = "Difference in Telic Egalitarian Life
+                                                  Satisfaction (2009-2019)", 
+                                                  format = colFormat(digits=2), 
+                                                  sortable=TRUE)))
+table_egalitarian
+
+```
