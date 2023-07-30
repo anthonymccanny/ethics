@@ -1,0 +1,281 @@
+---
+title: "Aggregation"
+author: "Sofia Panasiuk"
+date: "2023-07-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(tidyverse)
+library(tidyr)
+library(dplyr)
+library(ineq)
+library(htmltools)
+library(reactablefmtr)
+```
+
+
+Read in Data
+```{r}
+#############################
+#Gallup World Poll (2005-2022)
+#############################
+
+gallup_data <- readRDS("gallupCleaned230515.rds")
+
+ls_gallup <- gallup_data %>%
+  dplyr::select(COUNTRYNEW, COUNTRY_ISO3, YEAR_CALENDAR, WP16, WGT, WPID) #2,591,054 obs
+
+ls_gallup <- ls_gallup %>%
+  filter(!is.na(WP16)) #2,546,848 obs (98% completion rate) 
+
+#new column with weighted LS
+ls_gallup$w_WP16 <- ls_gallup$WP16*ls_gallup$WGT
+
+#Reduced Dataset 
+
+ls_gallup_red <- subset(ls_gallup, YEAR_CALENDAR >= 2020) #408,606
+ls_gallup_full <- ls_gallup 
+
+################################
+#World Values Survey (1981-2022)
+################################
+
+wvs_data <- read.csv("WVS_TimeSeries_4_0.csv")
+
+  #Key 
+
+  #COUNTRY_ALPHA: Alphabetic country index 
+` #S003: Country index 
+  #S024: Country - wave 
+  #A170: Variable code for life satisfaction
+  #S017: Weight 
+
+ls_wvs <- wvs_data %>%
+  dplyr::select(COUNTRY_ALPHA, S003, S002VS, A170, S017) #450,869 observations
+
+ls_wvs <- ls_wvs %>%
+  filter(!is.na(A170)) %>%
+  rename(life_sat = A170, wave = S002VS, WGT = S017, country_code = S003, 
+         country_alpha = COUNTRY_ALPHA) #450,869 observations
+
+#new column with weighted LS
+ls_wvs$w_life_sat <- ls_wvs$life_sat*ls_wvs$WGT
+
+#Reduced Dataset 
+
+ls_wvs_red <- subset(ls_wvs, wave >= 7) #94,278 obs.
+ls_wvs_full <- ls_wvs 
+```
+
+Gallup World Poll (2020-2022) Aggregation
+```{r}
+
+#Average Utilitarianism 
+average_ls <- ls_gallup_red %>% 
+  group_by(COUNTRYNEW) %>%
+  summarise(average_ls_val=sum(w_WP16,na.rm=T)/sum(WGT, na.rm=T),
+            n = n())
+
+#Adding ranking column
+average_ls$rank <- rank(-average_ls$average_ls_val)
+
+#Prioritarianism 
+prior_ls <- ls_gallup_red %>% 
+  group_by(COUNTRYNEW)%>%
+  summarise(prior_ls_val=sum(log(w_WP16+0.0001)/sum(WGT, na.rm=T), 
+                             n = n()) 
+
+  #adding a small number to account for those who responded WP16 = 0 
+  
+#Adding ranking column
+prior_ls$rank <- rank(-prior_ls$prior_ls_val)
+
+#Sufficientarianism 
+suff_ls <- ls_gallup_red %>% 
+  group_by(COUNTRYNEW) %>%
+  summarise(sum_WGT_by_country=sum(WGT[WP16 <= 4]), 
+            total_WGT = sum(WGT)) %>%
+  mutate(suff_ls_val = (sum_WGT_by_country/total_WGT) *100, n = n())
+
+#Adding ranking column
+suff_ls$rank <- rank(-suff_ls$suff_ls_val)
+
+#Egalitarinism (Gini)
+
+gini_ls <- ls_gallup_red %>% 
+  group_by(COUNTRYNEW)%>%
+  summarise(ls_gini_val=ineq(w_WP16, type="Gini"), n = n())
+
+#Adding ranking column
+gini_ls$rank <- rank(-gini_ls$ls_gini_val)
+
+
+#Egalitarinism (90/10)
+
+ls_9010 <- ls_gallup_red %>% 
+  group_by(COUNTRYNEW)%>%
+  summarise(ninety_percentile = quantile(w_WP16, 0.9), 
+            ten_percentile = quantile(w_WP16, 0.1),
+            ls_9010ratio = ninety_percentile/ten_percentile, n = n())
+
+ls_9010$rank <- rank(-ls_9010$ls_9010ratio)
+
+```
+
+World Values Survey (2017-2022) Aggregation
+```{r}
+
+#Average Utilitarianism 
+average_ls <- ls_gallup_red %>% 
+  group_by(COUNTRYNEW) %>%
+  summarise(average_ls_val=sum(w_WP16,na.rm=T)/sum(WGT, na.rm=T),
+            n = n())
+
+#Adding ranking column
+average_ls$rank <- rank(-average_ls$average_ls_val)
+
+#Prioritarianism 
+prior_ls <- ls_gallup_red %>% 
+  group_by(COUNTRYNEW)%>%
+  summarise(prior_ls_val=sum(log(w_WP16+0.0001)/sum(WGT, na.rm=T), 
+                             n = n()) 
+
+  #adding a small number to account for those who responded WP16 = 0 
+  
+#Adding ranking column
+prior_ls$rank <- rank(-prior_ls$prior_ls_val)
+
+#Sufficientarianism 
+suff_ls <- ls_gallup_red %>% 
+  group_by(COUNTRYNEW) %>%
+  summarise(sum_WGT_by_country=sum(WGT[WP16 <= 4]), 
+            total_WGT = sum(WGT)) %>%
+  mutate(suff_ls_val = (sum_WGT_by_country/total_WGT) *100, n = n())
+
+#Adding ranking column
+suff_ls$rank <- rank(-suff_ls$suff_ls_val)
+
+#Egalitarinism (Gini)
+
+gini_ls <- ls_gallup_red %>% 
+  group_by(COUNTRYNEW)%>%
+  summarise(ls_gini_val=ineq(w_WP16, type="Gini"), n = n())
+
+#Adding ranking column
+gini_ls$rank <- rank(-gini_ls$ls_gini_val)
+
+
+#Egalitarinism (90/10)
+
+ls_9010 <- ls_gallup_red %>% 
+  group_by(COUNTRYNEW)%>%
+  summarise(ninety_percentile = quantile(w_WP16, 0.9), 
+            ten_percentile = quantile(w_WP16, 0.1),
+            ls_9010ratio = ninety_percentile/ten_percentile, n = n())
+
+ls_9010$rank <- rank(-ls_9010$ls_9010ratio)
+
+
+```
+
+
+Gallup World Poll (2020-2022) Questions
+```{r}
+
+#Q1: 
+
+```
+
+
+```{r util tables}
+table_mean <- select(data_mean, c("COUNTRYNEW", "diff"))
+table_mean <- reactable(table_mean, columns=list(COUNTRYNEW = colDef(name = "Country", sortable=TRUE), 
+                                  diff = colDef(name = "Difference in Average Life Satisfaction (2009-2019)", sortable=TRUE, format = colFormat(digits=2))))
+
+table_mean %>%
+save_reactable("table_mean.png")
+
+```
+
+```{r prioritarianism}
+
+p_2009 <- data_2009%>% 
+  group_by(COUNTRYNEW, YEAR_CALENDAR)%>%
+  summarise(p_sum=sum(sqrt(WP16.LS)/n()))
+
+p_2019 <- data_2019%>% 
+  group_by(COUNTRYNEW, YEAR_CALENDAR)%>%
+  summarise(p_sum=sum(sqrt(WP16.LS)/n()))
+
+data_p <- merge(p_2009, p_2019, by.x = "COUNTRYNEW", by.y = "COUNTRYNEW")
+
+data_p$diff <- (data_p$p_sum.y - data_p$p_sum.x)
+
+
+```
+
+```{r prior tables}
+
+table_prior <- select(data_p, c("COUNTRYNEW", "diff"))
+table_prior <- reactable(table_prior, columns=list(COUNTRYNEW = colDef(name = "Country",
+                                                                       sortable=TRUE), 
+                                                   diff = colDef(name = "Difference in Prioritarian Life Satisfaction (2009-2019)", sortable=TRUE, format = colFormat(digits=2))))
+table_prior 
+```
+
+```{r sufficientiaranism }
+
+s_2009 <- data_2009%>% 
+  group_by(COUNTRYNEW, YEAR_CALENDAR)%>%
+  summarise(s_perc=(sum(WP16.LS <= 4)/n())*100)
+
+s_2019 <- data_2019%>% 
+  group_by(COUNTRYNEW, YEAR_CALENDAR)%>%
+  summarise(s_perc=(sum(WP16.LS <= 4)/n())*100)
+
+
+data_s <- merge(s_2009, s_2019, by.x = "COUNTRYNEW", by.y = "COUNTRYNEW")
+
+data_s$diff <- (data_s$s_perc.y - data_s$s_perc.x)
+
+```
+
+```{r suff tables}
+table_suff <- select(data_s, c("COUNTRYNEW", "diff"))
+table_suff <- reactable(table_suff, columns=list(COUNTRYNEW = colDef(name = "Country",
+                                                                       sortable=TRUE), 
+                                                   diff = colDef(name = "Difference in Sufficientirianism Life Satisfaction (2009-2019)", sortable=TRUE, format = colFormat(digits=2))))
+table_suff
+
+```
+
+```{r egal}
+
+lsgini_2009 <- data_2009%>% 
+  group_by(COUNTRYNEW, YEAR_CALENDAR)%>%
+  summarise(ls_gini=ineq(WP16.LS, type="Gini"))
+
+lsgini_2019 <- data_2019%>% 
+  group_by(COUNTRYNEW, YEAR_CALENDAR)%>%
+  summarise(ls_gini=ineq(WP16.LS, type="Gini"))
+
+data_lsgini <- merge(lsgini_2009, lsgini_2019, by.x = "COUNTRYNEW", by.y = "COUNTRYNEW")
+
+data_lsgini$diff <- factor(data_lsgini$ls_gini.y - data_lsgini$ls_gini.x)
+
+```
+
+```{r egal tables}
+
+table_egal <- select(data_lsgini, c("COUNTRYNEW", "diff"))
+table_egalitarian <- reactable(table_egal, columns=list(COUNTRYNEW = colDef(name = "Country",
+                                                                     sortable=TRUE), 
+                                    diff = colDef(name = "Difference in Telic Egalitarian Life
+                                                  Satisfaction (2009-2019)", 
+                                                  format = colFormat(digits=2), 
+                                                  sortable=TRUE)))
+table_egalitarian
+
+```
