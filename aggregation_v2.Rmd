@@ -8,6 +8,7 @@ output: html_document
 ```{r setup, include=FALSE}
 library(ggplot2)
 library(tidyverse)
+library(countrycode)
 library(tidyr)
 library(dplyr)
 library(ineq)
@@ -55,18 +56,60 @@ wvs_data <- read.csv("WVS_TimeSeries_4_0.csv")
 ls_wvs <- wvs_data %>%
   dplyr::select(COUNTRY_ALPHA, S003, S002VS, A170, S017) #450,869 observations
 
+
+ls_wvs$A170[ls_wvs$A170 == -1|ls_wvs$A170 == -2|ls_wvs$A170 == -3|
+              ls_wvs$A170 == -5] <- NA #removing non-response values (WVS Codebook)
+
 ls_wvs <- ls_wvs %>%
   filter(!is.na(A170)) %>%
   rename(life_sat = A170, wave = S002VS, WGT = S017, country_code = S003, 
-         country_alpha = COUNTRY_ALPHA) #450,869 observations
+         country_alpha = COUNTRY_ALPHA) %>% #446,899 observations (99% completion)
+  group_by(country_code) %>% 
+  mutate(country_name = countrycode(country_code,origin='iso3n',destination='country.name', warn = TRUE,
+                                    nomatch = NA))
+ 
+#Note error that country code '909' = NIR (Northern Ireland) did not have a separate country name
+#We added the name manually 
+
+ls_wvs$country_name[ls_wvs$country_alpha == 'NIR'] <- 'Northern Ireland'
 
 #new column with weighted LS
 ls_wvs$w_life_sat <- ls_wvs$life_sat*ls_wvs$WGT
 
 #Reduced Dataset 
 
-ls_wvs_red <- subset(ls_wvs, wave >= 7) #94,278 obs.
+ls_wvs_red <- subset(ls_wvs, wave >= 7) #93,868 obs.
 ls_wvs_full <- ls_wvs 
+```
+
+```{r}
+# Table S1 (Descriptive Statistics Per Country/Year Gallup)
+
+descr_gallup <- ls_gallup_full %>%
+    group_by(COUNTRYNEW, YEAR_CALENDAR) %>%
+    summarise(Mean_Life_Sat = round(mean(WP16, na.rm = TRUE), digits = 2),
+      SD_Life_Sat = round(sd(WP16, na.rm = TRUE), digits = 2), 
+      N = n()) %>%
+   pivot_wider(
+    id_cols = COUNTRYNEW,
+    names_from = YEAR_CALENDAR,
+    values_from = c(Mean_Life_Sat, SD_Life_Sat, N))
+
+write.csv(descr_gallup, "descr_gallup.csv")
+  
+# Table S2 (Descriptive Statistics Per Country/Year for WVS)
+descr_wvs <- ls_wvs_full %>%
+    group_by(country_name, wave) %>%
+    summarise(Mean_Life_Sat = round(mean(life_sat, na.rm = TRUE), digits = 2),
+      SD_Life_Sat = round(sd(life_sat, na.rm = TRUE), digits = 2), 
+      N = n()) %>%
+   pivot_wider(
+    id_cols = country_name,
+    names_from = wave,
+    values_from = c(Mean_Life_Sat, SD_Life_Sat, N))
+
+write.csv(descr_wvs, "descr_wvs.csv")
+
 ```
 
 Gallup World Poll (2020-2022) Aggregation
@@ -79,48 +122,51 @@ average_ls <- ls_gallup_red %>%
             n = n())
 
 #Adding ranking column
-average_ls$rank <- rank(-average_ls$average_ls_val)
+average_ls$rank_m <- rank(-average_ls$average_ls_val) #rank_m = Mean rank
 
 #Prioritarianism 
 prior_ls <- ls_gallup_red %>% 
   group_by(COUNTRYNEW)%>%
-  summarise(prior_ls_val=sum(log(w_WP16+0.0001)/sum(WGT, na.rm=T), 
+  summarise(prior_ls_val=sum(log(w_WP16+0.0001))/sum(WGT, na.rm=T), 
                              n = n()) 
 
-  #adding a small number to account for those who responded WP16 = 0 
+#adding a small number to account for those who responded WP16 = 0 
   
 #Adding ranking column
-prior_ls$rank <- rank(-prior_ls$prior_ls_val)
+prior_ls$rank_p <- rank(-prior_ls$prior_ls_val)
 
 #Sufficientarianism 
 suff_ls <- ls_gallup_red %>% 
   group_by(COUNTRYNEW) %>%
   summarise(sum_WGT_by_country=sum(WGT[WP16 <= 4]), 
             total_WGT = sum(WGT)) %>%
-  mutate(suff_ls_val = (sum_WGT_by_country/total_WGT) *100, n = n())
+  mutate(suff_ls_val = (sum_WGT_by_country/total_WGT) *100)
 
 #Adding ranking column
-suff_ls$rank <- rank(-suff_ls$suff_ls_val)
+suff_ls$rank_s <- rank(suff_ls$suff_ls_val) #smaller values rank higher
 
 #Egalitarinism (Gini)
-
 gini_ls <- ls_gallup_red %>% 
   group_by(COUNTRYNEW)%>%
   summarise(ls_gini_val=ineq(w_WP16, type="Gini"), n = n())
 
 #Adding ranking column
-gini_ls$rank <- rank(-gini_ls$ls_gini_val)
+gini_ls$rank_g <- rank(gini_ls$ls_gini_val) #smaller values rank higher
 
 
 #Egalitarinism (90/10)
-
 ls_9010 <- ls_gallup_red %>% 
   group_by(COUNTRYNEW)%>%
   summarise(ninety_percentile = quantile(w_WP16, 0.9), 
             ten_percentile = quantile(w_WP16, 0.1),
             ls_9010ratio = ninety_percentile/ten_percentile, n = n())
 
-ls_9010$rank <- rank(-ls_9010$ls_9010ratio)
+ls_9010$rank_9010 <- rank(ls_9010$ls_9010ratio) #smaller values rank higher
+
+list_df = list(average_ls, prior_ls, suff_ls, gini_ls, ls_9010)
+gallup_rankings <- list_df %>% reduce(inner_join, by='COUNTRYNEW')
+
+write.csv(gallup_rankings, "gallup_rankings.csv")
 
 ```
 
@@ -128,55 +174,57 @@ World Values Survey (2017-2022) Aggregation
 ```{r}
 
 #Average Utilitarianism 
-average_ls <- ls_gallup_red %>% 
-  group_by(COUNTRYNEW) %>%
-  summarise(average_ls_val=sum(w_WP16,na.rm=T)/sum(WGT, na.rm=T),
+average_ls_wvs <- ls_wvs_red %>% 
+  group_by(country_name) %>%
+  summarise(average_ls_val=sum(w_life_sat,na.rm=T)/sum(WGT, na.rm=T),
             n = n())
 
 #Adding ranking column
-average_ls$rank <- rank(-average_ls$average_ls_val)
+average_ls_wvs$rank_m <- rank(-average_ls_wvs$average_ls_val)
 
 #Prioritarianism 
-prior_ls <- ls_gallup_red %>% 
-  group_by(COUNTRYNEW)%>%
-  summarise(prior_ls_val=sum(log(w_WP16+0.0001)/sum(WGT, na.rm=T), 
+prior_ls_wvs <- ls_wvs_red %>% 
+  group_by(country_name)%>%
+  summarise(prior_ls_val=sum(log(w_life_sat+0.0001), na.rm=T)/sum(WGT, na.rm=T), 
                              n = n()) 
 
-  #adding a small number to account for those who responded WP16 = 0 
+#adding a small number to account for those who responded WP16 = 0 
   
 #Adding ranking column
-prior_ls$rank <- rank(-prior_ls$prior_ls_val)
+prior_ls_wvs$rank_p <- rank(-prior_ls_wvs$prior_ls_val)
 
 #Sufficientarianism 
-suff_ls <- ls_gallup_red %>% 
-  group_by(COUNTRYNEW) %>%
-  summarise(sum_WGT_by_country=sum(WGT[WP16 <= 4]), 
+suff_ls_wvs <- ls_wvs_red %>% 
+  group_by(country_name) %>%
+  summarise(sum_WGT_by_country=sum(WGT[life_sat <= 4]), 
             total_WGT = sum(WGT)) %>%
   mutate(suff_ls_val = (sum_WGT_by_country/total_WGT) *100, n = n())
 
 #Adding ranking column
-suff_ls$rank <- rank(-suff_ls$suff_ls_val)
+suff_ls_wvs$rank_s <- rank(suff_ls_wvs$suff_ls_val) #smaller values rank higher
 
 #Egalitarinism (Gini)
-
-gini_ls <- ls_gallup_red %>% 
-  group_by(COUNTRYNEW)%>%
-  summarise(ls_gini_val=ineq(w_WP16, type="Gini"), n = n())
+gini_ls_wvs <- ls_wvs_red %>% 
+  group_by(country_name) %>%
+  summarise(ls_gini_val=ineq(w_life_sat, type="Gini"), n = n())
 
 #Adding ranking column
-gini_ls$rank <- rank(-gini_ls$ls_gini_val)
+gini_ls_wvs$rank_g <- rank(gini_ls_wvs$ls_gini_val) #smaller values rank higher
 
 
 #Egalitarinism (90/10)
-
-ls_9010 <- ls_gallup_red %>% 
-  group_by(COUNTRYNEW)%>%
-  summarise(ninety_percentile = quantile(w_WP16, 0.9), 
-            ten_percentile = quantile(w_WP16, 0.1),
+ls_9010_wvs <- ls_wvs_red %>% 
+  group_by(country_name)%>%
+  summarise(ninety_percentile = quantile(w_life_sat, 0.9), 
+            ten_percentile = quantile(w_life_sat, 0.1),
             ls_9010ratio = ninety_percentile/ten_percentile, n = n())
 
-ls_9010$rank <- rank(-ls_9010$ls_9010ratio)
+ls_9010_wvs$rank_9010 <- rank(ls_9010_wvs$ls_9010ratio) #smaller values rank higher
 
+list_df = list(average_ls_wvs, prior_ls_wvs, suff_ls_wvs, gini_ls_wvs, ls_9010_wvs)
+wvs_rankings <- list_df %>% reduce(inner_join, by='country_name')
+
+write.csv(wvs_rankings, "wvs_rankings.csv")
 
 ```
 
