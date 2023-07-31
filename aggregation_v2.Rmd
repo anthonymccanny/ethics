@@ -68,7 +68,7 @@ ls_wvs <- ls_wvs %>%
   mutate(country_name = countrycode(country_code,origin='iso3n',destination='country.name', warn = TRUE,
                                     nomatch = NA))
  
-#Note error that country code '909' = NIR (Northern Ireland) did not have a separate country name
+#Note error that country code '909' = NIR (Northern Ireland) did not have a separate #country name
 #We added the name manually 
 
 ls_wvs$country_name[ls_wvs$country_alpha == 'NIR'] <- 'Northern Ireland'
@@ -231,8 +231,114 @@ write.csv(wvs_rankings, "wvs_rankings.csv")
 
 Gallup World Poll (2020-2022) Questions
 ```{r}
+###############################################################################
+#Q1: Which countries (if any) are performing above the 90th and 95th percentile
+#on all aggregation rankings?
+###############################################################################
 
-#Q1: 
+countries_above_90_percentile <- gallup_rankings %>%
+  filter(average_ls_val > quantile(average_ls_val, probs = 0.9),
+         prior_ls_val > quantile(prior_ls_val, probs = 0.9),
+         suff_ls_val < quantile(suff_ls_val, probs = 0.1), 
+         #lower values are ranked higher hence 10th percentile
+         ls_gini_val < quantile(ls_gini_val, probs = 0.1),
+         #lower values are ranked higher hence 10th percentile
+         ls_9010ratio < quantile(ls_9010ratio, probs = 0.1))
+         #lower values are ranked higher hence 10th percentile)
+
+# Print the result
+print(countries_above_90_percentile) 
+
+# Result: Finland, Israel and Norway rank above the 90th percentile in all 
+# aggregations
+
+countries_above_95_percentile <- gallup_rankings %>%
+  filter(average_ls_val > quantile(average_ls_val, probs = 0.95),
+         prior_ls_val > quantile(prior_ls_val, probs = 0.95),
+         suff_ls_val < quantile(suff_ls_val, probs = 0.05), 
+         #lower values are ranked higher hence 10th percentile
+         ls_gini_val < quantile(ls_gini_val, probs = 0.05),
+         #lower values are ranked higher hence 10th percentile
+         ls_9010ratio < quantile(ls_9010ratio, probs = 0.05))
+         #lower values are ranked higher hence 10th percentile)
+
+# Print the result
+print(countries_above_95_percentile) 
+
+# Result: Finland and Israel rank above the 90th percentile in all aggregations
+
+###############################################################################
+#Q2: Which countries (if any) are performing below the 10th and 5th percentile
+#on all aggregation rankings?
+###############################################################################
+
+countries_below_10_percentile <- gallup_rankings %>%
+  filter(average_ls_val < quantile(average_ls_val, probs = 0.1),
+         prior_ls_val < quantile(prior_ls_val, probs = 0.1),
+         suff_ls_val > quantile(suff_ls_val, probs = 0.9), 
+         #lower values are ranked higher hence 90th percentile
+         ls_gini_val > quantile(ls_gini_val, probs = 0.9),
+         #lower values are ranked higher hence 90th percentile
+         ls_9010ratio > quantile(ls_9010ratio, probs = 0.9))
+         #lower values are ranked higher hence 90th percentile)
+
+# Print the result
+print(countries_below_10_percentile) 
+
+# Result: None
+
+countries_below_5_percentile <- gallup_rankings %>%
+  filter(average_ls_val < quantile(average_ls_val, probs = 0.05),
+         prior_ls_val < quantile(prior_ls_val, probs = 0.05),
+         suff_ls_val > quantile(suff_ls_val, probs = 0.95), 
+         #lower values are ranked higher hence 10th percentile
+         ls_gini_val > quantile(ls_gini_val, probs = 0.95),
+         #lower values are ranked higher hence 10th percentile
+         ls_9010ratio > quantile(ls_9010ratio, probs = 0.95))
+         #lower values are ranked higher hence 10th percentile)
+
+# Print the result
+print(countries_below_5_percentile) 
+
+# Result: None
+##############################################################################
+# Q3: How common is it for countries to rank differently on aggregation rankings?
+##############################################################################
+
+comparisons <- gallup_rankings %>%
+  group_by(COUNTRYNEW) %>%
+  mutate(avg_prior=rank_m-rank_p,
+         avg_suff=rank_m-rank_s,
+         avg_gini=rank_m-rank_g,
+         avg_ratio=rank_m-rank_9010,
+         prior_suff=rank_p-rank_s,
+         prior_gini=rank_p-rank_g,
+         prior_ratio=rank_p-rank_9010,
+         suff_gini=rank_s-rank_g,
+         suff_ratio=rank_s-rank_9010,
+         gini_ratio=rank_g-rank_9010)
+
+
+comparisons_table <- subset(comparisons, select = -(2:19))
+
+write.csv(comparisons_table, "comparisons_table.csv")
+
+columns_to_count <- c("avg_prior", "avg_suff", "avg_gini", "avg_ratio", "prior_suff", 
+                      "prior_gini", "prior_ratio", "suff_gini", "suff_ratio", "gini_ratio")
+
+comparison_counts <- data.frame(matrix(NA, nrow = 1, ncol = length(columns_to_count)))
+
+for (column_name in columns_to_count) {
+  count_greater_than_zero <- sum(comparisons[[column_name]] > 0)
+  comparison_counts[[paste0(column_name, "_count")]] <- count_greater_than_zero
+}
+
+comparison_counts <- subset(comparison_counts, select = -(1:10))
+print(comparison_counts)
+
+#Almost all countries rank differently on each aggregation method, the most 
+#discrepancy is between sufficientarianist and Gini rankings where there is no
+#agreement between rankings at all (100% of countries rank differently)
 
 ```
 
