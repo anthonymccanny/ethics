@@ -58,7 +58,9 @@ ls_wvs <- wvs_data %>%
 
 
 ls_wvs$A170[ls_wvs$A170 == -1|ls_wvs$A170 == -2|ls_wvs$A170 == -3|
-              ls_wvs$A170 == -5] <- NA #removing non-response values (WVS Codebook)
+              ls_wvs$A170 == -5 | ls_wvs$A170 == -4] <- NA 
+
+#removing non-response values (WVS Codebook)
 
 ls_wvs <- ls_wvs %>%
   filter(!is.na(A170)) %>%
@@ -68,17 +70,19 @@ ls_wvs <- ls_wvs %>%
   mutate(country_name = countrycode(country_code,origin='iso3n',destination='country.name', warn = TRUE,
                                     nomatch = NA))
  
-#Note error that country code '909' = NIR (Northern Ireland) did not have a separate #country name
+#Note error that country code '909' = NIR (Northern Ireland) did not have
+#a separate country name
 #We added the name manually 
 
 ls_wvs$country_name[ls_wvs$country_alpha == 'NIR'] <- 'Northern Ireland'
 
 #new column with weighted LS
+
 ls_wvs$w_life_sat <- ls_wvs$life_sat*ls_wvs$WGT
 
 #Reduced Dataset 
 
-ls_wvs_red <- subset(ls_wvs, wave >= 7) #93,868 obs.
+ls_wvs_red <- subset(ls_wvs, wave >= 7) #94,278 obs.
 ls_wvs_full <- ls_wvs 
 ```
 
@@ -198,7 +202,7 @@ suff_ls_wvs <- ls_wvs_red %>%
   group_by(country_name) %>%
   summarise(sum_WGT_by_country=sum(WGT[life_sat <= 4]), 
             total_WGT = sum(WGT)) %>%
-  mutate(suff_ls_val = (sum_WGT_by_country/total_WGT) *100, n = n())
+  mutate(suff_ls_val = (sum_WGT_by_country/total_WGT) *100)
 
 #Adding ranking column
 suff_ls_wvs$rank_s <- rank(suff_ls_wvs$suff_ls_val) #smaller values rank higher
@@ -229,7 +233,7 @@ write.csv(wvs_rankings, "wvs_rankings.csv")
 ```
 
 
-Gallup World Poll (2020-2022) Questions
+Gallup World Poll Questions
 ```{r}
 ###############################################################################
 #Q1: Which countries (if any) are performing above the 90th and 95th percentile
@@ -305,9 +309,9 @@ print(countries_below_5_percentile)
 # Q3: How common is it for countries to rank differently on aggregation rankings?
 ##############################################################################
 
-comparisons <- gallup_rankings %>%
+comparisons_gallup <- gallup_rankings %>%
   group_by(COUNTRYNEW) %>%
-  mutate(avg_prior=rank_m-rank_p,
+  reframe(avg_prior=rank_m-rank_p,
          avg_suff=rank_m-rank_s,
          avg_gini=rank_m-rank_g,
          avg_ratio=rank_m-rank_9010,
@@ -318,10 +322,7 @@ comparisons <- gallup_rankings %>%
          suff_ratio=rank_s-rank_9010,
          gini_ratio=rank_g-rank_9010)
 
-
-comparisons_table <- subset(comparisons, select = -(2:19))
-
-write.csv(comparisons_table, "comparisons_table.csv")
+write.csv(comparisons_gallup, "comparisons_table_gallup.csv")
 
 columns_to_count <- c("avg_prior", "avg_suff", "avg_gini", "avg_ratio", "prior_suff", 
                       "prior_gini", "prior_ratio", "suff_gini", "suff_ratio", "gini_ratio")
@@ -329,8 +330,8 @@ columns_to_count <- c("avg_prior", "avg_suff", "avg_gini", "avg_ratio", "prior_s
 comparison_counts <- data.frame(matrix(NA, nrow = 1, ncol = length(columns_to_count)))
 
 for (column_name in columns_to_count) {
-  count_greater_than_zero <- sum(comparisons[[column_name]] > 0)
-  comparison_counts[[paste0(column_name, "_count")]] <- count_greater_than_zero
+  count_different_than_zero <- sum(comparisons_gallup[[column_name]] != 0)
+  comparison_counts[[paste0(column_name, "_count")]] <- count_different_than_zero
 }
 
 comparison_counts <- subset(comparison_counts, select = -(1:10))
@@ -340,8 +341,312 @@ print(comparison_counts)
 #discrepancy is between sufficientarianist and Gini rankings where there is no
 #agreement between rankings at all (100% of countries rank differently)
 
+##############################################################################
+# Q4: How often do the different population life satisfaction aggregations 
+#diverge (i.e., where one score increases and the other decreases)? 
+##############################################################################
+
+# Step 1: Calculate Time Series for Each Aggregation Method (2005-2022)
+
+#Average Utilitarianism 
+average_ls_ts <- ls_gallup_full %>% 
+  group_by(COUNTRYNEW, YEAR_CALENDAR) %>%
+  summarise(average_ls_val=sum(w_WP16,na.rm=T)/sum(WGT, na.rm=T),
+            n = n())
+
+#Prioritarianism 
+prior_ls_ts <- ls_gallup_full %>% 
+  group_by(COUNTRYNEW, YEAR_CALENDAR)%>%
+  summarise(prior_ls_val=sum(log(w_WP16+0.0001))/sum(WGT, na.rm=T), 
+                             n = n()) 
+
+#adding a small number to account for those who responded WP16 = 0 
+
+#Sufficientarianism 
+suff_ls_ts <- ls_gallup_full %>% 
+  group_by(COUNTRYNEW, YEAR_CALENDAR) %>%
+  summarise(sum_WGT_by_country=sum(WGT[WP16 <= 4]), 
+            total_WGT = sum(WGT)) %>%
+  mutate(suff_ls_val = (sum_WGT_by_country/total_WGT) *100)
+
+#Egalitarinism (Gini)
+gini_ls_ts <- ls_gallup_full %>% 
+  group_by(COUNTRYNEW, YEAR_CALENDAR)%>%
+  summarise(ls_gini_val=ineq(w_WP16, type="Gini"), n = n())
+
+#Egalitarinism (90/10)
+ls_9010_ts <- ls_gallup_full %>% 
+  group_by(COUNTRYNEW, YEAR_CALENDAR)%>%
+  summarise(ninety_percentile = quantile(w_WP16, 0.9), 
+            ten_percentile = quantile(w_WP16, 0.1),
+            ls_9010ratio = ninety_percentile/ten_percentile)
+
+list_df_ts = list(average_ls_ts, prior_ls_ts, suff_ls_ts, gini_ls_ts, ls_9010_ts)
+gallup_ts <- list_df_ts %>% reduce(inner_join, by=c('COUNTRYNEW', 'YEAR_CALENDAR'))
+
+# Step 2: Calculate the first difference for each life satisfaction value
+
+divergence_gallup <- gallup_ts %>%
+  group_by(COUNTRYNEW)%>%
+  reframe(year = YEAR_CALENDAR[-1],
+          diff_mean = diff(average_ls_val), 
+         diff_prior = diff(prior_ls_val),
+         diff_suff = diff(suff_ls_val),
+         diff_gini = diff(ls_gini_val),
+         diff_ratio = diff(ls_9010ratio)) 
+
+#the year column represents the year at time 2 
+#(e.g., LS(2009)-LS(2008), year = 2009)
+
+# Step 3: Code each divergence as a success (1), and each non-divergence (0)
+
+
+divergence_gallup <- divergence_gallup %>%
+  group_by(COUNTRYNEW, year)%>%
+  mutate(div_m_p = ifelse(sign(diff_mean) == sign(diff_prior), 0, 1),
+         div_m_s = ifelse(sign(diff_mean) == sign(diff_suff), 1, 0), 
+         div_m_g = ifelse(sign(diff_mean) == sign(diff_gini), 1, 0),
+         div_m_r = ifelse(sign(diff_mean) == sign(diff_ratio), 1, 0),
+         div_p_s = ifelse(sign(diff_prior) == sign(diff_suff), 1, 0),
+         div_p_g = ifelse(sign(diff_prior) == sign(diff_gini), 1, 0),
+         div_p_r = ifelse(sign(diff_prior) == sign(diff_ratio), 1, 0),
+         div_s_g = ifelse(sign(diff_suff) == sign(diff_gini), 0, 1),
+         div_s_r = ifelse(sign(diff_suff) == sign(diff_ratio), 0, 1),
+         div_g_r = ifelse(sign(diff_gini) == sign(diff_ratio), 0, 1))
+
+#Note that the dummy variables are coded 1 if there is divergence in the 
+#direction of positive/negative change. For example, an increase in LS 
+#under both average and prioritarianist aggregation is NOT a divergence
+#an increase in LS under average and gini aggregation is a divergence
+
+
+# Step 3: Calculate the raw percentages of divergences
+
+divergence_percentage_gallup <- divergence_gallup %>%
+  group_by(COUNTRYNEW) %>%
+  reframe(div_m_p_percent = (sum(div_m_p == 1)/n())*100,
+          div_m_s_percent = (sum(div_m_s == 1)/n())*100, 
+          div_m_g_percent = (sum(div_m_g == 1)/n())*100,
+          div_m_r_percent = (sum(div_m_r == 1)/n())*100,
+          div_p_s_percent = (sum(div_p_s == 1)/n())*100,
+          div_p_g_percent = (sum(div_p_g == 1)/n())*100,
+          div_p_r_percent = (sum(div_p_r == 1)/n())*100,
+          div_s_g_percent = (sum(div_s_g == 1)/n())*100,
+          div_s_r_percent = (sum(div_s_r == 1)/n())*100,
+          div_g_r_percent = (sum(div_g_r == 1)/n())*100)
+
+write.csv(divergence_percentage_gallup, "divergence_percentage_gallup.csv")
+         
+
 ```
 
+
+World Values Survey Questions
+```{r}
+###############################################################################
+#Q1: Which countries (if any) are performing above the 90th and 95th percentile
+#on all aggregation rankings?
+###############################################################################
+
+countries_above_90_percentile <- wvs_rankings %>%
+  filter(average_ls_val > quantile(average_ls_val, probs = 0.9),
+         prior_ls_val > quantile(prior_ls_val, probs = 0.9),
+         suff_ls_val < quantile(suff_ls_val, probs = 0.1), 
+         #lower values are ranked higher hence 10th percentile
+         ls_gini_val < quantile(ls_gini_val, probs = 0.1),
+         #lower values are ranked higher hence 10th percentile
+         ls_9010ratio < quantile(ls_9010ratio, probs = 0.1))
+         #lower values are ranked higher hence 10th percentile)
+
+# Print the result
+print(countries_above_90_percentile) 
+
+# Result: Vietnam ranks above the 90th percentile in all aggregations
+
+countries_above_95_percentile <- wvs_rankings %>%
+  filter(average_ls_val > quantile(average_ls_val, probs = 0.95),
+         prior_ls_val > quantile(prior_ls_val, probs = 0.95),
+         suff_ls_val < quantile(suff_ls_val, probs = 0.05), 
+         #lower values are ranked higher hence 10th percentile
+         ls_gini_val < quantile(ls_gini_val, probs = 0.05),
+         #lower values are ranked higher hence 10th percentile
+         ls_9010ratio < quantile(ls_9010ratio, probs = 0.05))
+         #lower values are ranked higher hence 10th percentile)
+
+# Print the result
+print(countries_above_95_percentile) 
+
+# Result: No countries rank above 95th percentile in all aggregations
+
+###############################################################################
+#Q2: Which countries (if any) are performing below the 10th and 5th percentile
+#on all aggregation rankings?
+###############################################################################
+
+countries_below_10_percentile <- wvs_rankings %>%
+  filter(average_ls_val < quantile(average_ls_val, probs = 0.1),
+         prior_ls_val < quantile(prior_ls_val, probs = 0.1),
+         suff_ls_val > quantile(suff_ls_val, probs = 0.9), 
+         #lower values are ranked higher hence 90th percentile
+         ls_gini_val > quantile(ls_gini_val, probs = 0.9),
+         #lower values are ranked higher hence 90th percentile
+         ls_9010ratio > quantile(ls_9010ratio, probs = 0.9))
+         #lower values are ranked higher hence 90th percentile)
+
+# Print the result
+print(countries_below_10_percentile) 
+
+# Result: Zimbabwe ranks below the 90th percentile in all aggregations 
+
+countries_below_5_percentile <- wvs_rankings %>%
+  filter(average_ls_val < quantile(average_ls_val, probs = 0.05),
+         prior_ls_val < quantile(prior_ls_val, probs = 0.05),
+         suff_ls_val > quantile(suff_ls_val, probs = 0.95), 
+         #lower values are ranked higher hence 10th percentile
+         ls_gini_val > quantile(ls_gini_val, probs = 0.95),
+         #lower values are ranked higher hence 10th percentile
+         ls_9010ratio > quantile(ls_9010ratio, probs = 0.95))
+         #lower values are ranked higher hence 10th percentile)
+
+# Print the result
+print(countries_below_5_percentile) 
+
+# Result: No countries rank below the 5th percentile in all aggregations
+
+##############################################################################
+# Q3: How common is it for countries to rank differently on aggregation rankings?
+##############################################################################
+
+comparisons_wvs <- wvs_rankings %>%
+  group_by(country_name) %>%
+  reframe(avg_prior=rank_m-rank_p,
+         avg_suff=rank_m-rank_s,
+         avg_gini=rank_m-rank_g,
+         avg_ratio=rank_m-rank_9010,
+         prior_suff=rank_p-rank_s,
+         prior_gini=rank_p-rank_g,
+         prior_ratio=rank_p-rank_9010,
+         suff_gini=rank_s-rank_g,
+         suff_ratio=rank_s-rank_9010,
+         gini_ratio=rank_g-rank_9010)
+
+write.csv(comparisons_wvs, "comparisons_table_wvs.csv")
+
+columns_to_count <- c("avg_prior", "avg_suff", "avg_gini", "avg_ratio", "prior_suff", 
+                      "prior_gini", "prior_ratio", "suff_gini", "suff_ratio", "gini_ratio")
+
+comparison_counts <- data.frame(matrix(NA, nrow = 1, ncol = length(columns_to_count)))
+
+for (column_name in columns_to_count) {
+  count_different_than_zero <- sum(comparisons_wvs[[column_name]] != 0 )
+  comparison_counts[[paste0(column_name, "_count")]] <- count_different_than_zero
+}
+
+comparison_counts <- subset(comparison_counts, select = -(1:10))
+print(comparison_counts)
+
+#Almost all countries rank differently on each aggregation method, the most 
+#discrepancy is between sufficientarianist and Gini rankings where there is no
+#agreement between rankings at all (100% of countries rank differently)
+
+##############################################################################
+# Q4: How often do the different population life satisfaction aggregations 
+#diverge (i.e., where one score increases and the other decreases)? 
+##############################################################################
+
+# Step 1: Calculate Time Series for Each Aggregation Method (2005-2022)
+
+#Average Utilitarianism 
+average_ls_ts <- ls_wvs_full %>% 
+  group_by(country_name, wave) %>%
+  summarise(average_ls_val=sum(w_life_sat,na.rm=T)/sum(WGT, na.rm=T),
+            n = n())
+
+#Prioritarianism 
+prior_ls_ts <- ls_wvs_full %>% 
+  group_by(country_name, wave)%>%
+  summarise(prior_ls_val=sum(log(w_life_sat+0.0001))/sum(WGT, na.rm=T), 
+                             n = n()) 
+
+#adding a small number to account for those who responded WP16 = 0 
+
+#Sufficientarianism 
+suff_ls_ts <- ls_wvs_full %>% 
+  group_by(country_name, wave) %>%
+  summarise(sum_WGT_by_country=sum(WGT[life_sat <= 4]), 
+            total_WGT = sum(WGT)) %>%
+  mutate(suff_ls_val = (sum_WGT_by_country/total_WGT) *100)
+
+#Egalitarinism (Gini)
+gini_ls_ts <- ls_wvs_full %>% 
+  group_by(country_name, wave)%>%
+  summarise(ls_gini_val=ineq(w_life_sat, type="Gini"), n = n())
+
+#Egalitarinism (90/10)
+ls_9010_ts <- ls_wvs_full %>% 
+  group_by(country_name, wave)%>%
+  summarise(ninety_percentile = quantile(w_life_sat, 0.9), 
+            ten_percentile = quantile(w_life_sat, 0.1),
+            ls_9010ratio = ninety_percentile/ten_percentile)
+
+list_df_ts = list(average_ls_ts, prior_ls_ts, suff_ls_ts, gini_ls_ts, ls_9010_ts)
+wvs_ts <- list_df_ts %>% reduce(inner_join, by=c('country_name', 'wave'))
+
+# Step 2: Calculate the first difference for each life satisfaction value
+
+divergence_wvs <- wvs_ts %>%
+  group_by(country_name)%>%
+  reframe(wave = wave[-1],
+          diff_mean = diff(average_ls_val), 
+          diff_prior = diff(prior_ls_val),
+          diff_suff = diff(suff_ls_val),
+          diff_gini = diff(ls_gini_val),
+          diff_ratio = diff(ls_9010ratio)) 
+
+#the year column represents the year at time 2 
+#(e.g., LS(3)-LS(2), wave = 3)
+
+# Step 3: Code each divergence as a success (1), and each non-divergence (0)
+
+
+divergence_wvs <- divergence_wvs %>%
+  group_by(country_name, wave)%>%
+  mutate(div_m_p = ifelse(sign(diff_mean) == sign(diff_prior), 0, 1),
+         div_m_s = ifelse(sign(diff_mean) == sign(diff_suff), 1, 0), 
+         div_m_g = ifelse(sign(diff_mean) == sign(diff_gini), 1, 0),
+         div_m_r = ifelse(sign(diff_mean) == sign(diff_ratio), 1, 0),
+         div_p_s = ifelse(sign(diff_prior) == sign(diff_suff), 1, 0),
+         div_p_g = ifelse(sign(diff_prior) == sign(diff_gini), 1, 0),
+         div_p_r = ifelse(sign(diff_prior) == sign(diff_ratio), 1, 0),
+         div_s_g = ifelse(sign(diff_suff) == sign(diff_gini), 0, 1),
+         div_s_r = ifelse(sign(diff_suff) == sign(diff_ratio), 0, 1),
+         div_g_r = ifelse(sign(diff_gini) == sign(diff_ratio), 0, 1))
+
+#Note that the dummy variables are coded 1 if there is divergence in the 
+#direction of positive/negative change. For example, an increase in LS 
+#under both average and prioritarianist aggregation is NOT a divergence
+#an increase in LS under average and gini aggregation is a divergence
+
+
+# Step 3: Calculate the raw percentages of divergences
+
+divergence_percentage_wvs <- divergence_wvs %>%
+  group_by(country_name) %>%
+  reframe(div_m_p_percent = (sum(div_m_p == 1)/n())*100,
+          div_m_s_percent = (sum(div_m_s == 1)/n())*100, 
+          div_m_g_percent = (sum(div_m_g == 1)/n())*100,
+          div_m_r_percent = (sum(div_m_r == 1)/n())*100,
+          div_p_s_percent = (sum(div_p_s == 1)/n())*100,
+          div_p_g_percent = (sum(div_p_g == 1)/n())*100,
+          div_p_r_percent = (sum(div_p_r == 1)/n())*100,
+          div_s_g_percent = (sum(div_s_g == 1)/n())*100,
+          div_s_r_percent = (sum(div_s_r == 1)/n())*100,
+          div_g_r_percent = (sum(div_g_r == 1)/n())*100)
+
+write.csv(divergence_percentage_wvs, "divergence_percentage_wvs.csv")
+         
+
+```
 
 ```{r util tables}
 table_mean <- select(data_mean, c("COUNTRYNEW", "diff"))
