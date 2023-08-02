@@ -9,6 +9,9 @@ output: html_document
 library(ggplot2)
 library(tidyverse)
 library(countrycode)
+library(ggpubr)
+library(nortest)
+library(binom)
 library(tidyr)
 library(dplyr)
 library(ineq)
@@ -48,7 +51,7 @@ wvs_data <- read.csv("WVS_TimeSeries_4_0.csv")
   #Key 
 
   #COUNTRY_ALPHA: Alphabetic country index 
-` #S003: Country index 
+  #S003: Country index 
   #S024: Country - wave 
   #A170: Variable code for life satisfaction
   #S017: Weight 
@@ -436,7 +439,23 @@ divergence_percentage_gallup <- divergence_gallup %>%
           div_g_r_percent = (sum(div_g_r == 1)/n())*100)
 
 write.csv(divergence_percentage_gallup, "divergence_percentage_gallup.csv")
-         
+        
+# Step 4: Run Bayes binomial test with Jeffrey’s prior (no prior)
+
+
+
+##############################################################################
+# Q5: What percentage of countries’ life satisfaction scores deviate from a normal distribution? 
+##############################################################################
+
+shapiro_test <- ls_gallup_red %>%
+  group_by(COUNTRYNEW) %>%
+  filter(n() <= 5000) %>%
+  summarise(stat_s = shapiro.test(WP16)$statistic,
+            p_val = shapiro.test(WP16)$p.value)
+
+#Add Skewness-Kurtosis All tests + visual tests
+
 
 ```
 
@@ -644,7 +663,19 @@ divergence_percentage_wvs <- divergence_wvs %>%
           div_g_r_percent = (sum(div_g_r == 1)/n())*100)
 
 write.csv(divergence_percentage_wvs, "divergence_percentage_wvs.csv")
-         
+
+
+##############################################################################
+# Q5: What percentage of countries’ life satisfaction scores deviate from a normal distribution? 
+##############################################################################
+
+shapiro_test_wvs <- ls_wvs_red %>%
+  group_by(country_name) %>%
+  filter(n() <= 5000) %>%
+  summarise(stat_s = shapiro.test(life_sat)$statistic,
+            p_val = shapiro.test(life_sat)$p.value)
+
+#Add Skewness-Kurtosis All tests + visual tests
 
 ```
 
