@@ -9,6 +9,7 @@ output: html_document
 library(ggplot2)
 library(tidyverse)
 library(countrycode)
+library(gridExtra)
 library(ggpubr)
 library(nortest)
 library(binom)
@@ -445,16 +446,78 @@ write.csv(divergence_percentage_gallup, "divergence_percentage_gallup.csv")
 
 
 ##############################################################################
-# Q5: What percentage of countries’ life satisfaction scores deviate from a normal distribution? 
-##############################################################################
+# Q5: What percentage of countries’ life satisfaction scores deviate from a normal distribution? ##############################################################################
 
-shapiro_test <- ls_gallup_red %>%
+ls_gallup_red_w <- ls_gallup_red %>%
+  group_by(COUNTRYNEW, WP16) %>%
+  mutate(mean_WGT = mean(WGT)) %>% #calculating the average weight for a given LS
+  ungroup() %>%
   group_by(COUNTRYNEW) %>%
-  filter(n() <= 5000) %>%
-  summarise(stat_s = shapiro.test(WP16)$statistic,
-            p_val = shapiro.test(WP16)$p.value)
+  mutate(w_lifesat_dist = mean_WGT * WP16, #weighting LS values by average weight
+         n = n(), #number of observations
+         normal_mean = mean(w_lifesat_dist, na.rm=TRUE), #normal distribution mean
+         normal_sd = sd(w_lifesat_dist, na.rm=TRUE)) %>% #normal distribution sd
+  mutate(expected_val = dnorm(w_lifesat_dist, 
+                                  mean = normal_mean, 
+                                  sd = normal_sd) * n) %>%
+  ungroup() %>%
+  group_by(COUNTRYNEW, w_lifesat_dist) %>%
+  mutate(actual_val = n()) #actual # of individuals with distinct WP16 values
 
-#Add Skewness-Kurtosis All tests + visual tests
+count_exclude <- unique(ls_gallup_red_w$COUNTRYNEW[ls_gallup_red_w$expected_val < 5])
+count_exclude 
+#58 countries to be excluded from chi-squared test due to less than 5 observations 
+#for one the bins 
+
+chi_test_df <- ls_gallup_red_w %>%
+  filter(!(COUNTRYNEW %in% count_exclude)) %>%
+  group_by(COUNTRYNEW) %>%
+  distinct(expected_val, .keep_all = TRUE) %>% #leaving us with 86 countries 
+  summarise(n = sum(expected_val), 
+            estimate = list(chisq.test(actual_val, p = expected_val/n)$statistic),
+            p_value = list(chisq.test(actual_val, p = expected_val/n)$p.value),
+            parameter = list(chisq.test(actual_val, p = expected_val/n)$parameter)) %>%
+  mutate(estimate = estimate, p_value = p_value, parameter = parameter)
+
+#error for Croatia, chi-squared approximation may be incorrect
+#all other chi-squared tests reject the null
+
+# Visual Representation by Histograms 
+
+# Define a function to create histograms and save as a PDF
+create_histograms <- function(data, filename) {
+  histograms <- data %>%
+    ggplot(aes(x = WP16)) + #raw LS because weighted LS would give us values > 10
+    geom_histogram(binwidth = 0.5, fill = "blue", color = "black", alpha = 0.7) +
+    labs(x = "Weighted Life Satisfaction",
+         y = "Frequency") +
+    theme_minimal() +
+    facet_wrap(~COUNTRYNEW, scales = "free")
+
+  ggsave(filename, plot = histograms, width = 10, height = 8)
+}
+
+# Set the output file names
+output_filenames <- c("g_histograms_set1.pdf", "g_histograms_set2.pdf", "g_histograms_set3.pdf", "g_histograms_set4.pdf", 
+                      "g_histograms_set5.pdf", "g_histograms_set6.pdf", "g_histograms_set7.pdf", "g_histograms_set8.pdf")
+
+# Loop through different sets of countries and create histograms
+unique_countries <- unique(ls_gallup_red_w$COUNTRYNEW)
+
+# Split data by unique country names
+country_chunks <- vector("list", length(output_filenames))
+for (i in seq_along(country_chunks)) {
+  start <- (i - 1) * 20 + 1
+  end <- min(i * 20, length(unique_countries))
+  selected_countries <- unique_countries[start:end]
+  
+  country_chunks[[i]] <- ls_gallup_red_w %>% filter(COUNTRYNEW %in% selected_countries)
+}
+
+# Create histograms for each group of 20 countries and save as PDFs
+for (i in seq_along(country_chunks)) {
+  create_histograms(country_chunks[[i]], output_filenames[i])
+}
 
 
 ```
@@ -669,13 +732,79 @@ write.csv(divergence_percentage_wvs, "divergence_percentage_wvs.csv")
 # Q5: What percentage of countries’ life satisfaction scores deviate from a normal distribution? 
 ##############################################################################
 
-shapiro_test_wvs <- ls_wvs_red %>%
-  group_by(country_name) %>%
-  filter(n() <= 5000) %>%
-  summarise(stat_s = shapiro.test(life_sat)$statistic,
-            p_val = shapiro.test(life_sat)$p.value)
+##############################################################################
+# Q5: What percentage of countries’ life satisfaction scores deviate from a normal distribution? ##############################################################################
 
-#Add Skewness-Kurtosis All tests + visual tests
+ls_wvs_red_w <- ls_wvs_red %>%
+  group_by(country_name, life_sat) %>%
+  mutate(mean_WGT = mean(WGT)) %>% #calculating the average weight for a given LS
+  ungroup() %>%
+  group_by(country_name) %>%
+  mutate(w_lifesat_dist = mean_WGT * life_sat, #weighting LS values by average weight
+         n = n(), #number of observations
+         normal_mean = mean(w_lifesat_dist, na.rm=TRUE), #normal distribution mean
+         normal_sd = sd(w_lifesat_dist, na.rm=TRUE)) %>% #normal distribution sd
+  mutate(expected_val = dnorm(w_lifesat_dist, 
+                                  mean = normal_mean, 
+                                  sd = normal_sd) * n) %>%
+  ungroup() %>%
+  group_by(country_name, w_lifesat_dist) %>%
+  mutate(actual_val = n()) #actual # of individuals with distinct lifesat values
+
+count_exclude <- unique(ls_wvs_red_w$country_name[ls_wvs_red_w$expected_val < 5])
+count_exclude 
+#40 countries to be excluded from chi-squared test due to less than 5 observations 
+#for one the bins 
+
+chi_test_df <- ls_wvs_red_w %>%
+  filter(!(country_name %in% count_exclude)) %>%
+  group_by(country_name) %>%
+  distinct(expected_val, .keep_all = TRUE) %>% #leaving us with 86 countries 
+  summarise(n = sum(expected_val), 
+            estimate = list(chisq.test(actual_val, p = expected_val/n)$statistic),
+            p_value = list(chisq.test(actual_val, p = expected_val/n)$p.value),
+            parameter = list(chisq.test(actual_val, p = expected_val/n)$parameter)) %>%
+  mutate(estimate = estimate, p_value = p_value, parameter = parameter)
+
+# Visual Representation by Histograms 
+
+# Define a function to create histograms and save as a PDF
+create_histograms <- function(data, filename) {
+  histograms <- data %>%
+    ggplot(aes(x = life_sat)) + #raw LS because weighted LS would give us values > 10
+    geom_histogram(binwidth = 0.5, fill = "blue", color = "black", alpha = 0.7) +
+    labs(x = "Weighted Life Satisfaction",
+         y = "Frequency") +
+    theme_minimal() +
+    facet_wrap(~country_name, scales = "free")
+
+  ggsave(filename, plot = histograms, width = 10, height = 8)
+}
+
+# Set the output file names
+output_filenames <- c("wvs_histograms_set1.pdf", "wvs_histograms_set2.pdf", "wvs_histograms_set3.pdf",
+                      "wvs_histograms_set4.pdf", "wvs_histograms_set5.pdf", "wvs_histograms_set6.pdf",
+                      "wvs_histograms_set7.pdf")
+
+# Loop through different sets of countries and create histograms
+unique_countries <- unique(ls_wvs_red_w$country_name)
+
+# Split data by unique country names
+country_chunks <- vector("list", length(output_filenames))
+for (i in seq_along(country_chunks)) {
+  start <- (i - 1) * 10 + 1
+  end <- min(i * 10, length(unique_countries))
+  selected_countries <- unique_countries[start:end]
+  
+  country_chunks[[i]] <- ls_wvs_red_w %>% filter(country_name %in% selected_countries)
+}
+
+# Create histograms for each group of 10 countries and save as PDFs
+for (i in seq_along(country_chunks)) {
+  create_histograms(country_chunks[[i]], output_filenames[i])
+}
+
+
 
 ```
 
