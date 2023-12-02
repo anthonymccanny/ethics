@@ -1,16 +1,19 @@
 ---
 title: "Aggregation"
 author: "Sofia Panasiuk"
-date: "2023-07-26"
+date: "2023-11-15"
 output: html_document
 ---
 
 ```{r setup, include=FALSE}
 library(ggplot2)
+library(stats)
 library(tidyverse)
 library(countrycode)
 library(gridExtra)
+library(patchwork)
 library(ggpubr)
+library(BayesFactor)
 library(nortest)
 library(binom)
 library(tidyr)
@@ -27,21 +30,29 @@ Read in Data
 #Gallup World Poll (2005-2022)
 #############################
 
-gallup_data <- readRDS("gallupCleaned230515.rds")
+#Run GWP_cleaningCode_ethics.rmd to get object "gallup"
 
-ls_gallup <- gallup_data %>%
-  dplyr::select(COUNTRYNEW, COUNTRY_ISO3, YEAR_CALENDAR, WP16, WGT, WPID) #2,591,054 obs
-
-ls_gallup <- ls_gallup %>%
-  filter(!is.na(WP16)) #2,546,848 obs (98% completion rate) 
+ls_gallup <- gallup
 
 #new column with weighted LS
 ls_gallup$w_WP16 <- ls_gallup$WP16*ls_gallup$WGT
 
 #Reduced Dataset 
 
-ls_gallup_red <- subset(ls_gallup, YEAR_CALENDAR >= 2020) #408,606
+ls_gallup_red <- subset(ls_gallup, YEAR_INTERVIEW >= 2020) #408,606
 ls_gallup_full <- ls_gallup 
+
+#Check which years are missing: 
+
+missing_years <- ls_gallup_red %>%
+  group_by(COUNTRYNEW) %>%
+  mutate(missing_count = 3 - n_distinct(YEAR_INTERVIEW)) %>%
+  filter(missing_count > 0) %>%
+  summarise(missing_years = toString(setdiff(2020:2022, YEAR_INTERVIEW)))
+
+print(missing_years)
+
+#Only Yemen is missing all three years, note other countries in descriptive figures
 
 ################################
 #World Values Survey (1981-2022)
@@ -94,13 +105,13 @@ ls_wvs_full <- ls_wvs
 # Table S1 (Descriptive Statistics Per Country/Year Gallup)
 
 descr_gallup <- ls_gallup_full %>%
-    group_by(COUNTRYNEW, YEAR_CALENDAR) %>%
+    group_by(COUNTRYNEW, YEAR_INTERVIEW) %>%
     summarise(Mean_Life_Sat = round(mean(WP16, na.rm = TRUE), digits = 2),
       SD_Life_Sat = round(sd(WP16, na.rm = TRUE), digits = 2), 
       N = n()) %>%
    pivot_wider(
     id_cols = COUNTRYNEW,
-    names_from = YEAR_CALENDAR,
+    names_from = YEAR_INTERVIEW,
     values_from = c(Mean_Life_Sat, SD_Life_Sat, N))
 
 write.csv(descr_gallup, "descr_gallup.csv")
@@ -134,9 +145,9 @@ average_ls$rank_m <- rank(-average_ls$average_ls_val) #rank_m = Mean rank
 
 #Prioritarianism 
 prior_ls <- ls_gallup_red %>% 
-  group_by(COUNTRYNEW)%>%
-  summarise(prior_ls_val=sum(log(w_WP16+0.0001))/sum(WGT, na.rm=T), 
-                             n = n()) 
+  group_by(COUNTRYNEW) %>%
+  summarise(prior_ls_val=sum(log(w_WP16+0.0001), na.rm=T)/sum(WGT, na.rm=T), 
+                             n = n())         
 
 #adding a small number to account for those who responded WP16 = 0 
   
@@ -146,9 +157,9 @@ prior_ls$rank_p <- rank(-prior_ls$prior_ls_val)
 #Sufficientarianism 
 suff_ls <- ls_gallup_red %>% 
   group_by(COUNTRYNEW) %>%
-  summarise(sum_WGT_by_country=sum(WGT[WP16 <= 4]), 
-            total_WGT = sum(WGT)) %>%
-  mutate(suff_ls_val = (sum_WGT_by_country/total_WGT) *100)
+  summarise(sum_WGT_by_country=sum(WGT[WP16 <= 4], na.rm=T), 
+            total_WGT = sum(WGT, na.rm=T)) %>%
+  mutate(suff_ls_val = (sum_WGT_by_country/total_WGT)*100)
 
 #Adding ranking column
 suff_ls$rank_s <- rank(suff_ls$suff_ls_val) #smaller values rank higher
@@ -165,8 +176,8 @@ gini_ls$rank_g <- rank(gini_ls$ls_gini_val) #smaller values rank higher
 #Egalitarinism (90/10)
 ls_9010 <- ls_gallup_red %>% 
   group_by(COUNTRYNEW)%>%
-  summarise(ninety_percentile = quantile(w_WP16, 0.9), 
-            ten_percentile = quantile(w_WP16, 0.1),
+  summarise(ninety_percentile = quantile(w_WP16, 0.9, na.rm=TRUE), 
+            ten_percentile = quantile(w_WP16, 0.1, na.rm=TRUE),
             ls_9010ratio = ninety_percentile/ten_percentile, n = n())
 
 ls_9010$rank_9010 <- rank(ls_9010$ls_9010ratio) #smaller values rank higher
@@ -175,6 +186,27 @@ list_df = list(average_ls, prior_ls, suff_ls, gini_ls, ls_9010)
 gallup_rankings <- list_df %>% reduce(inner_join, by='COUNTRYNEW')
 
 write.csv(gallup_rankings, "gallup_rankings.csv")
+
+#Calculating deviations
+
+# Create a function to calculate the deviation
+calculate_deviation <- function(row) {
+  deviations_20 <- sum(abs(diff(row)) > 20)
+  deviations_50 <- sum(abs(diff(row)) > 50)
+  return(c(deviations_20, deviations_50))
+}
+
+# Apply the function row-wise to calculate deviations
+deviations <- apply(gallup_rankings[, c("rank_m", "rank_g")], 1, calculate_deviation)
+
+# Sum the deviations for each threshold
+count_deviation_20 <- sum(deviations[1, ])
+count_deviation_50 <- sum(deviations[2, ])
+
+# Print the results
+cat("Number of countries with deviations > 20 spots:", count_deviation_20, "\n")
+cat("Number of countries with deviations > 50 spots:", count_deviation_50, "\n")
+
 
 ```
 
@@ -206,7 +238,7 @@ suff_ls_wvs <- ls_wvs_red %>%
   group_by(country_name) %>%
   summarise(sum_WGT_by_country=sum(WGT[life_sat <= 4]), 
             total_WGT = sum(WGT)) %>%
-  mutate(suff_ls_val = (sum_WGT_by_country/total_WGT) *100)
+  mutate(suff_ls_val = (sum_WGT_by_country/total_WGT)*100)
 
 #Adding ranking column
 suff_ls_wvs$rank_s <- rank(suff_ls_wvs$suff_ls_val) #smaller values rank higher
@@ -223,8 +255,8 @@ gini_ls_wvs$rank_g <- rank(gini_ls_wvs$ls_gini_val) #smaller values rank higher
 #Egalitarinism (90/10)
 ls_9010_wvs <- ls_wvs_red %>% 
   group_by(country_name)%>%
-  summarise(ninety_percentile = quantile(w_life_sat, 0.9), 
-            ten_percentile = quantile(w_life_sat, 0.1),
+  summarise(ninety_percentile = quantile(w_life_sat, 0.9, na.rm=TRUE), 
+            ten_percentile = quantile(w_life_sat, 0.1, na.rm=TRUE),
             ls_9010ratio = ninety_percentile/ten_percentile, n = n())
 
 ls_9010_wvs$rank_9010 <- rank(ls_9010_wvs$ls_9010ratio) #smaller values rank higher
@@ -273,7 +305,7 @@ countries_above_95_percentile <- gallup_rankings %>%
 # Print the result
 print(countries_above_95_percentile) 
 
-# Result: Finland and Israel rank above the 90th percentile in all aggregations
+# Result: Finland and Israel rank above the 95th percentile in all aggregations
 
 ###############################################################################
 #Q2: Which countries (if any) are performing below the 10th and 5th percentile
@@ -345,6 +377,37 @@ print(comparison_counts)
 #discrepancy is between sufficientarianist and Gini rankings where there is no
 #agreement between rankings at all (100% of countries rank differently)
 
+#Visualization 
+
+#Visualization
+
+comparisons_gallup_vis <- comparisons_gallup %>%
+  rename("AU-P" = avg_prior, "AU-S" = avg_suff, "AU-G" = avg_gini, 
+         "AU-R" = avg_ratio, "P-S" = prior_suff, "P-G" = prior_gini,
+         "P-R" = prior_ratio, "S-G" = suff_gini, "S-R" = suff_ratio,
+         "G-R" = gini_ratio)
+
+boxplot_rankings_gallup <- comparisons_gallup_vis %>%
+  select(-COUNTRYNEW) %>%
+  pivot_longer(everything(), names_to = "Column", values_to = "Value") %>%
+  ggplot(aes(y = Value, fill = Column)) +
+  geom_boxplot(alpha = 0.7) +
+  labs(title = "Population Life Satisfaction Ranking Differences (Gallup)") +
+  theme_minimal() +
+  labs(y = "Difference in Rank", fill = "Formula") +
+  theme(axis.text.x = element_blank(), plot.title = element_text(hjust = 0.5)) +
+  scale_fill_brewer(palette = "YlGnBu")
+
+print(boxplot_rankings_gallup)
+
+ggsave("boxplot_rankings_gallup.jpeg", boxplot_rankings_gallup, 
+       width = 8, height = 6, dpi = 300)
+
+#Determining largest interquartile range
+IQR(comparisons_gallup$suff_gini) #35
+IQR(comparisons_gallup$avg_gini) #35.25
+IQR(comparisons_gallup$avg_suff) #9.00
+
 ##############################################################################
 # Q4: How often do the different population life satisfaction aggregations 
 #diverge (i.e., where one score increases and the other decreases)? 
@@ -354,45 +417,45 @@ print(comparison_counts)
 
 #Average Utilitarianism 
 average_ls_ts <- ls_gallup_full %>% 
-  group_by(COUNTRYNEW, YEAR_CALENDAR) %>%
+  group_by(COUNTRYNEW, YEAR_INTERVIEW) %>%
   summarise(average_ls_val=sum(w_WP16,na.rm=T)/sum(WGT, na.rm=T),
             n = n())
 
 #Prioritarianism 
 prior_ls_ts <- ls_gallup_full %>% 
-  group_by(COUNTRYNEW, YEAR_CALENDAR)%>%
-  summarise(prior_ls_val=sum(log(w_WP16+0.0001))/sum(WGT, na.rm=T), 
+  group_by(COUNTRYNEW, YEAR_INTERVIEW)%>%
+  summarise(prior_ls_val=sum(log(w_WP16+0.0001), na.rm=T)/sum(WGT, na.rm=T), 
                              n = n()) 
 
 #adding a small number to account for those who responded WP16 = 0 
 
 #Sufficientarianism 
 suff_ls_ts <- ls_gallup_full %>% 
-  group_by(COUNTRYNEW, YEAR_CALENDAR) %>%
-  summarise(sum_WGT_by_country=sum(WGT[WP16 <= 4]), 
+  group_by(COUNTRYNEW, YEAR_INTERVIEW) %>%
+  summarise(sum_WGT_by_country=sum(WGT[WP16 <= 4], na.rm=T), 
             total_WGT = sum(WGT)) %>%
   mutate(suff_ls_val = (sum_WGT_by_country/total_WGT) *100)
 
 #Egalitarinism (Gini)
 gini_ls_ts <- ls_gallup_full %>% 
-  group_by(COUNTRYNEW, YEAR_CALENDAR)%>%
+  group_by(COUNTRYNEW, YEAR_INTERVIEW)%>%
   summarise(ls_gini_val=ineq(w_WP16, type="Gini"), n = n())
 
 #Egalitarinism (90/10)
 ls_9010_ts <- ls_gallup_full %>% 
-  group_by(COUNTRYNEW, YEAR_CALENDAR)%>%
-  summarise(ninety_percentile = quantile(w_WP16, 0.9), 
-            ten_percentile = quantile(w_WP16, 0.1),
+  group_by(COUNTRYNEW, YEAR_INTERVIEW) %>%
+  summarise(ninety_percentile = quantile(w_WP16, 0.9, na.rm=T), 
+            ten_percentile = quantile(w_WP16, 0.1, na.rm=T),
             ls_9010ratio = ninety_percentile/ten_percentile)
 
 list_df_ts = list(average_ls_ts, prior_ls_ts, suff_ls_ts, gini_ls_ts, ls_9010_ts)
-gallup_ts <- list_df_ts %>% reduce(inner_join, by=c('COUNTRYNEW', 'YEAR_CALENDAR'))
+gallup_ts <- list_df_ts %>% reduce(inner_join, by=c('COUNTRYNEW', 'YEAR_INTERVIEW'))
 
 # Step 2: Calculate the first difference for each life satisfaction value
 
 divergence_gallup <- gallup_ts %>%
   group_by(COUNTRYNEW)%>%
-  reframe(year = YEAR_CALENDAR[-1],
+  reframe(year = YEAR_INTERVIEW[-1],
           diff_mean = diff(average_ls_val), 
          diff_prior = diff(prior_ls_val),
          diff_suff = diff(suff_ls_val),
@@ -401,6 +464,41 @@ divergence_gallup <- gallup_ts %>%
 
 #the year column represents the year at time 2 
 #(e.g., LS(2009)-LS(2008), year = 2009)
+
+# Example Divergence Timeseries
+
+every_nth = function(n) {
+  return(function(x) {x[c(TRUE, rep(FALSE, n - 1))]})
+}
+
+#Example timeseries plot 
+
+nigeria <- divergence_gallup %>%
+  filter(COUNTRYNEW == 'Nigeria') 
+
+nigeria_plot <- ggplot(nigeria, aes(x = year)) +
+  geom_line(aes(y = diff_mean, color = "diff_mean", linetype = "diff_mean", group = 1)) +
+  geom_line(aes(y = diff_prior, color = "diff_prior", linetype = "diff_prior", group = 2)) +
+  geom_line(aes(y = diff_suff, color = "diff_suff", linetype = "diff_suff", group = 3)) +
+  geom_line(aes(y = diff_gini, color = "diff_gini", linetype = "diff_gini", group = 4)) +
+  geom_line(aes(y = diff_ratio, color = "diff_ratio", linetype = "diff_ratio", group = 5)) +
+  scale_x_discrete(breaks = every_nth(n = 2)) + 
+  labs(title = "Change in Population Life Satisfaction Timeseries (Nigeria: 2007-2022)",
+       x = "Year",
+       y = "Change in Aggregated Life Satisfaction", 
+       color = "Aggregation Method") +
+  scale_linetype_manual(name = "Aggregation Method",
+                        values = c("diff_mean" = "solid", "diff_prior" = "twodash", "diff_suff" = "dotted", "diff_gini" = "longdash", "diff_ratio" = "dashed"),
+                        labels = c("G", "AU", "P", "R", "S")) +
+  scale_color_manual(name = "Aggregation Method",
+                     values = c("diff_mean" = "red", "diff_prior" = "blue", "diff_suff" = "green", "diff_gini" = "purple", "diff_ratio" = "orange"),
+                     labels = c("G", "AU", "P", "R", "S")) +
+  theme_minimal() +
+  theme(legend.position = "right")
+
+ggsave("nigeria_plot.jpg", nigeria_plot, width = 8, height = 5, dpi = 300)
+
+
 
 # Step 3: Code each divergence as a success (1), and each non-divergence (0)
 
@@ -418,13 +516,14 @@ divergence_gallup <- divergence_gallup %>%
          div_s_r = ifelse(sign(diff_suff) == sign(diff_ratio), 0, 1),
          div_g_r = ifelse(sign(diff_gini) == sign(diff_ratio), 0, 1))
 
+
 #Note that the dummy variables are coded 1 if there is divergence in the 
 #direction of positive/negative change. For example, an increase in LS 
 #under both average and prioritarianist aggregation is NOT a divergence
 #an increase in LS under average and gini aggregation is a divergence
 
 
-# Step 3: Calculate the raw percentages of divergences
+# Step 3: Calculate the raw percentages of divergences within-country
 
 divergence_percentage_gallup <- divergence_gallup %>%
   group_by(COUNTRYNEW) %>%
@@ -441,12 +540,61 @@ divergence_percentage_gallup <- divergence_gallup %>%
 
 write.csv(divergence_percentage_gallup, "divergence_percentage_gallup.csv")
         
-# Step 4: Run Bayes binomial test with Jeffrey’s prior (no prior)
+#calculating proportion of divergence with confidence interval between-country
 
+conduct_binom_test <- function(column) {
+  # Remove NA values
+  column <- na.omit(column)
+  
+  # Skip non-binary columns
+  if (!all(column %in% c(0, 1))) {
+    cat("Skipping column as it does not contain binary values.\n")
+    return(NULL)
+  }
+  
+  # Binomial test
+  result <- binom.test(sum(column), length(column))
+  
+  # Print results
+  cat("Proportion:", result$estimate, "\n")
+  cat("Confidence Interval:", result$conf.int, "\n")
+  cat("\n")
+}
+
+# Loop through each column of the dataframe
+for (col_name in colnames(divergence_gallup)) {
+  cat("Results for column", col_name, ":\n")
+  
+  # Conduct binomial test
+  conduct_binom_test(divergence_gallup[[col_name]])
+}
+
+        
+# Step 4: Run Bayes binomial test with prior (p = 0.001)
+
+columns <- names(divergence_gallup)[8:17]
+bf_test_list <- list()
+output_dir <- "posterior_plots_gallup"
+
+for (col in columns) {
+  n <- sum(!is.na(divergence_gallup[[col]]))
+  y <- sum(divergence_gallup[[col]] == 1, na.rm = TRUE)
+  bf_test <- proportionBF(y, n, p = 0.001)
+  bf_test_list[[col]] <- bf_test
+  cat("Divergence Test (Gallup):", col, "\n")
+  cat("Number of divergences", y, "\n")
+  cat("Total number of instances", n, "\n")
+  summary(bf_test)
+  chains <- posterior(bf_test_list[[col]], iterations = 10000)
+  p <- plot(chains[,"p"], main = paste("Divergence of\n", col))
+  plot_filename = sprintf("%s/plot_gwp%s.png", output_dir, col)
+  ggsave(plot_filename, p, width = 8, height = 6, dpi = 300)
+}
 
 
 ##############################################################################
-# Q5: What percentage of countries’ life satisfaction scores deviate from a normal distribution? ##############################################################################
+# Q5: What percentage of countries’ life satisfaction scores deviate from a normal distribution?
+##########################################################################
 
 ls_gallup_red_w <- ls_gallup_red %>%
   group_by(COUNTRYNEW, WP16) %>%
@@ -464,23 +612,34 @@ ls_gallup_red_w <- ls_gallup_red %>%
   group_by(COUNTRYNEW, w_lifesat_dist) %>%
   mutate(actual_val = n()) #actual # of individuals with distinct WP16 values
 
-count_exclude <- unique(ls_gallup_red_w$COUNTRYNEW[ls_gallup_red_w$expected_val < 5])
+count_exclude = unique(ls_gallup_red_w$COUNTRYNEW[ls_gallup_red_w$expected_val < 5])
 count_exclude 
-#58 countries to be excluded from chi-squared test due to less than 5 observations 
+#59 countries to be excluded from chi-squared test due to less than 5 observations 
 #for one the bins 
 
-chi_test_df <- ls_gallup_red_w %>%
+chi_test_df_gallup <- ls_gallup_red_w %>%
   filter(!(COUNTRYNEW %in% count_exclude)) %>%
   group_by(COUNTRYNEW) %>%
-  distinct(expected_val, .keep_all = TRUE) %>% #leaving us with 86 countries 
-  summarise(n = sum(expected_val), 
-            estimate = list(chisq.test(actual_val, p = expected_val/n)$statistic),
-            p_value = list(chisq.test(actual_val, p = expected_val/n)$p.value),
-            parameter = list(chisq.test(actual_val, p = expected_val/n)$parameter)) %>%
+  distinct(expected_val, .keep_all = TRUE) %>% 
+  na.omit() %>%  #leaving us with 85 countries 
+  summarise(COUNTRYNEW = COUNTRYNEW,
+            n = sum(expected_val),
+            estimate = chisq.test(actual_val, p = expected_val/n, rescale.p = TRUE)$statistic,
+            p_value = chisq.test(actual_val, p = expected_val/n, rescale.p = TRUE)$p.value,
+            parameter = chisq.test(actual_val, p = expected_val/n, rescale.p = TRUE)$parameter) %>%
   mutate(estimate = estimate, p_value = p_value, parameter = parameter)
+
+#selects unique instances (collapses multiple occurences of the same country)
+unique_chi_test_gallup <- chi_test_df_gallup %>%
+  distinct(COUNTRYNEW, .keep_all = TRUE) 
+    
+  unique_chi_test_gallup$bh_corrected = p.adjust(unique_chi_test_gallup$p_value, 
+                                                method = "BH")
 
 #error for Croatia, chi-squared approximation may be incorrect
 #all other chi-squared tests reject the null
+
+write.csv(unique_chi_test_gallup, "chi_test_df_gallup.csv")
 
 # Visual Representation by Histograms 
 
@@ -489,7 +648,7 @@ create_histograms <- function(data, filename) {
   histograms <- data %>%
     ggplot(aes(x = WP16)) + #raw LS because weighted LS would give us values > 10
     geom_histogram(binwidth = 0.5, fill = "blue", color = "black", alpha = 0.7) +
-    labs(x = "Weighted Life Satisfaction",
+    labs(x = "Life Satisfaction",
          y = "Frequency") +
     theme_minimal() +
     facet_wrap(~COUNTRYNEW, scales = "free")
@@ -519,6 +678,16 @@ for (i in seq_along(country_chunks)) {
   create_histograms(country_chunks[[i]], output_filenames[i])
 }
 
+##Select countries for histogram for main text
+
+select_histograms <- ls_gallup_red %>%
+  group_by(COUNTRYNEW) %>%
+  filter(COUNTRYNEW == "Congo Brazzaville" |
+         COUNTRYNEW == "Tajikistan" |
+         COUNTRYNEW == "Finland" |
+         COUNTRYNEW == "Sierra Leone")
+
+create_histograms(select_histograms, "histograms_main_text_gallup.pdf")
 
 ```
 
@@ -631,6 +800,37 @@ print(comparison_counts)
 #discrepancy is between sufficientarianist and Gini rankings where there is no
 #agreement between rankings at all (100% of countries rank differently)
 
+#Visualization
+
+comparisons_wvs_vis <- comparisons_wvs %>%
+  rename("AU-P" = avg_prior, "AU-S" = avg_suff, "AU-G" = avg_gini, 
+         "AU-R" = avg_ratio, "P-S" = prior_suff, "P-G" = prior_gini,
+         "P-R" = prior_ratio, "S-G" = suff_gini, "S-R" = suff_ratio,
+         "G-R" = gini_ratio)
+
+# Create density plots using dplyr and pipe
+boxplot_rankings_wvs <- comparisons_wvs_vis %>%
+  select(-country_name) %>%
+  pivot_longer(everything(), names_to = "Column", values_to = "Value") %>%
+  ggplot(aes(y = Value, fill = Column)) +
+  geom_boxplot(alpha = 0.7) +
+  labs(title = "Population Life Satisfaction Ranking Differences (World Values Survey)") +
+  theme_minimal() +
+  labs(y = "Difference in Rank", fill = "Formula") +
+  theme(axis.text.x = element_blank(), plot.title = element_text(hjust = 0.5)) +
+  scale_fill_brewer(palette = "YlGnBu")
+
+print(boxplot_rankings_wvs)
+
+ggsave("boxplot_rankings_wvs.jpeg", boxplot_rankings_wvs, 
+       width = 8, height = 6, dpi = 300)
+
+#Determining largest interquartile range
+IQR(comparisons_wvs$suff_gini) #27
+IQR(comparisons_wvs$avg_gini) #31
+IQR(comparisons_wvs$gini_ratio) #6
+
+
 ##############################################################################
 # Q4: How often do the different population life satisfaction aggregations 
 #diverge (i.e., where one score increases and the other decreases)? 
@@ -647,7 +847,7 @@ average_ls_ts <- ls_wvs_full %>%
 #Prioritarianism 
 prior_ls_ts <- ls_wvs_full %>% 
   group_by(country_name, wave)%>%
-  summarise(prior_ls_val=sum(log(w_life_sat+0.0001))/sum(WGT, na.rm=T), 
+  summarise(prior_ls_val=sum(log(w_life_sat+0.0001), na.rm=T)/sum(WGT, na.rm=T), 
                              n = n()) 
 
 #adding a small number to account for those who responded WP16 = 0 
@@ -655,7 +855,7 @@ prior_ls_ts <- ls_wvs_full %>%
 #Sufficientarianism 
 suff_ls_ts <- ls_wvs_full %>% 
   group_by(country_name, wave) %>%
-  summarise(sum_WGT_by_country=sum(WGT[life_sat <= 4]), 
+  summarise(sum_WGT_by_country=sum(WGT[life_sat <= 4], na.rm=T), 
             total_WGT = sum(WGT)) %>%
   mutate(suff_ls_val = (sum_WGT_by_country/total_WGT) *100)
 
@@ -709,6 +909,16 @@ divergence_wvs <- divergence_wvs %>%
 #under both average and prioritarianist aggregation is NOT a divergence
 #an increase in LS under average and gini aggregation is a divergence
 
+#calculating proportion of divergence with confidence interval between-country
+
+for (col_name in colnames(divergence_wvs)) {
+  cat("Results for column", col_name, ":\n")
+  
+  # Conduct binomial test
+  conduct_binom_test(divergence_wvs[[col_name]])
+}
+
+
 
 # Step 3: Calculate the raw percentages of divergences
 
@@ -728,9 +938,25 @@ divergence_percentage_wvs <- divergence_wvs %>%
 write.csv(divergence_percentage_wvs, "divergence_percentage_wvs.csv")
 
 
-##############################################################################
-# Q5: What percentage of countries’ life satisfaction scores deviate from a normal distribution? 
-##############################################################################
+# Step 4: Run Bayes binomial test with no prior (p = 0.001)
+
+columns <- names(divergence_wvs)[8:17]
+bf_test_list <- list()
+output_dir <- "posterior_plots_wvs"
+
+for (col in columns) {
+  n <- sum(!is.na(divergence_wvs[[col]]))
+  y <- sum(divergence_wvs[[col]] == 1, na.rm = TRUE)
+  bf_test <- proportionBF(y, n, p = 0.001)
+  bf_test_list[[col]] <- bf_test
+  cat("Divergence Test (WVS):", col, "\n")
+  cat("Number of divergences", y, "\n")
+  cat("Total number of instances", n, "\n")
+  summary(bf_test)
+  chains <- posterior(bf_test_list[[col]], iterations = 10000)
+  p <- plot(chains[,"p"], main = paste("Divergence of\n", col))
+  plot_filename = sprintf("%s/plot_wvs%s.png", output_dir, col)
+}
 
 ##############################################################################
 # Q5: What percentage of countries’ life satisfaction scores deviate from a normal distribution? ##############################################################################
@@ -756,15 +982,28 @@ count_exclude
 #40 countries to be excluded from chi-squared test due to less than 5 observations 
 #for one the bins 
 
-chi_test_df <- ls_wvs_red_w %>%
+chi_test_df_wvs <- ls_wvs_red_w %>%
   filter(!(country_name %in% count_exclude)) %>%
   group_by(country_name) %>%
   distinct(expected_val, .keep_all = TRUE) %>% #leaving us with 86 countries 
-  summarise(n = sum(expected_val), 
-            estimate = list(chisq.test(actual_val, p = expected_val/n)$statistic),
-            p_value = list(chisq.test(actual_val, p = expected_val/n)$p.value),
-            parameter = list(chisq.test(actual_val, p = expected_val/n)$parameter)) %>%
+  summarise(country_name = country_name,
+            n = sum(expected_val), 
+            estimate = chisq.test(actual_val, p = expected_val/n)$statistic,
+            p_value = chisq.test(actual_val, p = expected_val/n)$p.value,
+            parameter = chisq.test(actual_val, p = expected_val/n)$parameter) %>%
   mutate(estimate = estimate, p_value = p_value, parameter = parameter)
+
+
+#selects unique instances (collapses multiple occurences of the same country)
+unique_chi_test_wvs <- chi_test_df_wvs %>%
+  distinct(country_name, .keep_all = TRUE) 
+unique_chi_test_wvs$bh_corrected = p.adjust(unique_chi_test_wvs$p_value, 
+                                                method = "BH")
+
+#error for Croatia, chi-squared approximation may be incorrect
+#all other chi-squared tests reject the null
+
+write.csv(unique_chi_test_wvs, "chi_test_df_wvs.csv")
 
 # Visual Representation by Histograms 
 
@@ -773,7 +1012,7 @@ create_histograms <- function(data, filename) {
   histograms <- data %>%
     ggplot(aes(x = life_sat)) + #raw LS because weighted LS would give us values > 10
     geom_histogram(binwidth = 0.5, fill = "blue", color = "black", alpha = 0.7) +
-    labs(x = "Weighted Life Satisfaction",
+    labs(x = "Life Satisfaction",
          y = "Frequency") +
     theme_minimal() +
     facet_wrap(~country_name, scales = "free")
@@ -783,8 +1022,7 @@ create_histograms <- function(data, filename) {
 
 # Set the output file names
 output_filenames <- c("wvs_histograms_set1.pdf", "wvs_histograms_set2.pdf", "wvs_histograms_set3.pdf",
-                      "wvs_histograms_set4.pdf", "wvs_histograms_set5.pdf", "wvs_histograms_set6.pdf",
-                      "wvs_histograms_set7.pdf")
+                      "wvs_histograms_set4.pdf")
 
 # Loop through different sets of countries and create histograms
 unique_countries <- unique(ls_wvs_red_w$country_name)
@@ -792,109 +1030,17 @@ unique_countries <- unique(ls_wvs_red_w$country_name)
 # Split data by unique country names
 country_chunks <- vector("list", length(output_filenames))
 for (i in seq_along(country_chunks)) {
-  start <- (i - 1) * 10 + 1
-  end <- min(i * 10, length(unique_countries))
+  start <- (i - 1) * 20 + 1
+  end <- min(i * 20, length(unique_countries))
   selected_countries <- unique_countries[start:end]
   
   country_chunks[[i]] <- ls_wvs_red_w %>% filter(country_name %in% selected_countries)
 }
 
-# Create histograms for each group of 10 countries and save as PDFs
+# Create histograms for each group of 20 countries and save as PDFs
 for (i in seq_along(country_chunks)) {
   create_histograms(country_chunks[[i]], output_filenames[i])
 }
 
-
-
 ```
 
-```{r util tables}
-table_mean <- select(data_mean, c("COUNTRYNEW", "diff"))
-table_mean <- reactable(table_mean, columns=list(COUNTRYNEW = colDef(name = "Country", sortable=TRUE), 
-                                  diff = colDef(name = "Difference in Average Life Satisfaction (2009-2019)", sortable=TRUE, format = colFormat(digits=2))))
-
-table_mean %>%
-save_reactable("table_mean.png")
-
-```
-
-```{r prioritarianism}
-
-p_2009 <- data_2009%>% 
-  group_by(COUNTRYNEW, YEAR_CALENDAR)%>%
-  summarise(p_sum=sum(sqrt(WP16.LS)/n()))
-
-p_2019 <- data_2019%>% 
-  group_by(COUNTRYNEW, YEAR_CALENDAR)%>%
-  summarise(p_sum=sum(sqrt(WP16.LS)/n()))
-
-data_p <- merge(p_2009, p_2019, by.x = "COUNTRYNEW", by.y = "COUNTRYNEW")
-
-data_p$diff <- (data_p$p_sum.y - data_p$p_sum.x)
-
-
-```
-
-```{r prior tables}
-
-table_prior <- select(data_p, c("COUNTRYNEW", "diff"))
-table_prior <- reactable(table_prior, columns=list(COUNTRYNEW = colDef(name = "Country",
-                                                                       sortable=TRUE), 
-                                                   diff = colDef(name = "Difference in Prioritarian Life Satisfaction (2009-2019)", sortable=TRUE, format = colFormat(digits=2))))
-table_prior 
-```
-
-```{r sufficientiaranism }
-
-s_2009 <- data_2009%>% 
-  group_by(COUNTRYNEW, YEAR_CALENDAR)%>%
-  summarise(s_perc=(sum(WP16.LS <= 4)/n())*100)
-
-s_2019 <- data_2019%>% 
-  group_by(COUNTRYNEW, YEAR_CALENDAR)%>%
-  summarise(s_perc=(sum(WP16.LS <= 4)/n())*100)
-
-
-data_s <- merge(s_2009, s_2019, by.x = "COUNTRYNEW", by.y = "COUNTRYNEW")
-
-data_s$diff <- (data_s$s_perc.y - data_s$s_perc.x)
-
-```
-
-```{r suff tables}
-table_suff <- select(data_s, c("COUNTRYNEW", "diff"))
-table_suff <- reactable(table_suff, columns=list(COUNTRYNEW = colDef(name = "Country",
-                                                                       sortable=TRUE), 
-                                                   diff = colDef(name = "Difference in Sufficientirianism Life Satisfaction (2009-2019)", sortable=TRUE, format = colFormat(digits=2))))
-table_suff
-
-```
-
-```{r egal}
-
-lsgini_2009 <- data_2009%>% 
-  group_by(COUNTRYNEW, YEAR_CALENDAR)%>%
-  summarise(ls_gini=ineq(WP16.LS, type="Gini"))
-
-lsgini_2019 <- data_2019%>% 
-  group_by(COUNTRYNEW, YEAR_CALENDAR)%>%
-  summarise(ls_gini=ineq(WP16.LS, type="Gini"))
-
-data_lsgini <- merge(lsgini_2009, lsgini_2019, by.x = "COUNTRYNEW", by.y = "COUNTRYNEW")
-
-data_lsgini$diff <- factor(data_lsgini$ls_gini.y - data_lsgini$ls_gini.x)
-
-```
-
-```{r egal tables}
-
-table_egal <- select(data_lsgini, c("COUNTRYNEW", "diff"))
-table_egalitarian <- reactable(table_egal, columns=list(COUNTRYNEW = colDef(name = "Country",
-                                                                     sortable=TRUE), 
-                                    diff = colDef(name = "Difference in Telic Egalitarian Life
-                                                  Satisfaction (2009-2019)", 
-                                                  format = colFormat(digits=2), 
-                                                  sortable=TRUE)))
-table_egalitarian
-
-```
