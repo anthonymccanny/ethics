@@ -1,0 +1,84 @@
+---
+title: "GallupDataPreparation"
+author: "Kenith"
+date: '2023-08-28'
+---
+
+## 0. Subset the Gallup raw data
+
+The version of the Gallup raw data used in this study is "The_Gallup_021723.dat". This data was released to the [UofT Map and Data Library](https://mdl.library.utoronto.ca/collections/numeric-data/gallup) on February 14, 2023.
+
+Since the raw data file is relatively large (14Gb), we used a separate environment to run the following code, which subsets the variables that we needed.
+
+```{r eval=FALSE}
+# This code will not be run
+# Import the data file "The_Gallup_021723.dat"
+gallupRaw <- rio::import("The_Gallup_021723.dat")
+
+# Create a character vector of the names of the variables we're interested in
+varRequired <- c(
+    "WPID", "WGT", "COUNTRYNEW", "COUNTRY_ISO3", "YEAR_CALENDAR", "WP4", "YEAR_WAVE", 
+    "WP16"
+)
+
+# Subset gallupRaw to include only the variables specified in varRequired
+gallupSubset <- gallupRaw %>% select(all_of(varRequired))
+
+# Save the gallupSubset data frame to a .rds file for later use
+saveRDS(gallupSubset, "GWP_subset_ethics.rds")
+```
+
+The environment used had the following specifications:\
+R version 4.0.3 (2020-10-10)
+
+Platform: x86_64-pc-linux-gnu (64-bit)
+
+Running under: CentOS Linux 7 (Core)
+
+-   **R version**: 4.0.3 (2020-10-10)
+
+-   **Platform**: x86_64-pc-linux-gnu (64-bit)
+
+-   **Running under**: CentOS Linux 7 (Core)
+
+-   **Matrix products**: default
+
+    -   **BLAS**: /local/software/R/v4.0.3/lib64/R/lib/libRblas.so
+    -   **LAPACK**: /local/software/R/v4.0.3/lib64/R/lib/libRlapack.so
+
+-   **Attached base packages**: stats, graphics, grDevices, utils, datasets, methods, base
+
+-   **Other attached packages**: dplyr_1.0.6
+
+-   **Loaded via a namespace (and not attached)**: base64enc_0.1-3, bit_4.0.4, bit64_4.0.5, cellranger_1.1.0, compiler_4.0.3, crayon_1.4.1, curl_4.3.1, data.table_1.14.0, digest_0.6.27, ellipsis_0.3.2, evaluate_0.14, fansi_0.5.0, forcats_0.5.1, foreign_0.8-80, generics_0.1.0, glue_1.4.2, haven_2.4.1, hms_1.1.0, htmltools_0.5.1.1, IRdisplay_1.0, IRkernel_1.2, jsonlite_1.7.2, lifecycle_1.0.0, magrittr_2.0.1, openxlsx_4.2.3, pbdZMQ_0.3-5, pillar_1.6.1, pkgconfig_2.0.3, purrr_0.3.4, R6_2.5.0, Rcpp_1.0.6, readxl_1.3.1, repr_1.1.3, rio_0.5.26, rlang_0.4.11, stringi_1.6.2, tibble_3.1.2, tidyselect_1.1.1, tools_4.0.3, utf8_1.2.1, uuid_0.1-4, vctrs_0.3.8, zip_2.2.0
+
+## 1. Clean the Subset Gallup Data
+
+Once we have the subset of the Gallup data, we import the data and load the necessary packages:
+
+```{r}
+# Load "dplyr"
+library(dplyr)
+
+# Read the RDS file
+gallupSubset <- readRDS("GWP_subset_ethics.rds")
+```
+
+Next, we create a new variable, `YEAR_INTERVIEW`, which is the year of the interview. This is either: - Extracted from `WP4` (Interview Date), or - The same as `YEAR_CALENDAR` (The calendar year during which the data were collected, based on the last day of interviewing) if `WP4` is missing.
+
+```{r}
+gallup <- gallupSubset %>% 
+  # Convert WP4 to a date
+  mutate(WP4 = as.Date(WP4, "%m/%d/%Y")) %>%
+  # Create YEAR_INTERVIEW variable
+  mutate(YEAR_INTERVIEW = ifelse(is.na(WP4), YEAR_CALENDAR, format(WP4, format="%Y")))
+```
+
+Gallup has coded some responses as 'Don't Know' or 'Refused'. These responses are not meaningful for our analysis, so we'll convert them to `NA`. The corresponding values can be found at the [WORLD POLL REFERENCE TOOL](https://wpr.gallup.com/).
+
+```{r}
+# Convert certain values to NA
+gallup <- gallup %>% mutate(WP16 = ifelse(WP16 %in% c(98, 99), NA, WP16))
+```
+
+The object `gallup` is now a cleaned subset of the Gallup data.
