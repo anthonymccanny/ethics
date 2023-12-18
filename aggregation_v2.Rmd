@@ -104,6 +104,7 @@ ls_wvs_full <- ls_wvs
 ```{r}
 # Table S1 (Descriptive Statistics Per Country/Year Gallup)
 
+# TODO: These descriptives should use sampling weights
 descr_gallup <- ls_gallup_full %>%
     group_by(COUNTRYNEW, YEAR_INTERVIEW) %>%
     summarise(Mean_Life_Sat = round(mean(WP16, na.rm = TRUE), digits = 2),
@@ -133,6 +134,7 @@ write.csv(descr_wvs, "descr_wvs.csv")
 
 Gallup World Poll (2020-2022) Aggregation
 ```{r}
+#TODO: Average within years and then across years to account for differences in sample size (?)
 
 #Average Utilitarianism 
 average_ls <- ls_gallup_red %>% 
@@ -142,6 +144,9 @@ average_ls <- ls_gallup_red %>%
 
 #Adding ranking column
 average_ls$rank_m <- rank(-average_ls$average_ls_val) #rank_m = Mean rank
+
+#TODO: Fix the use of w_WP16 in the following code, it causes issues in Prioritarianism, 90/10 and Gini. The weights need to be included in a different way.
+#TODO: Calculate aggregates within years and then average across years, otherwise sample size differences cause bias, and for measures of dispersion changes in wellbeing across years is penalized
 
 #Prioritarianism 
 prior_ls <- ls_gallup_red %>% 
